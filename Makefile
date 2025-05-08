@@ -2,6 +2,9 @@ IMAGE_NAME=yolov8-custom:gpu-py3.10.11
 IMAGE_NAME_v2=yolov11-binsho:py3.12
 
 run:
+	PYTHONPATH=. uv run src/train.py
+
+run-docker:
 	docker run \
 	--ipc=host \
 	-it --rm --gpus all \
@@ -31,3 +34,5 @@ get-req:
 	--resolution lowest-direct \
 	--no-hashes \
 	-o requirements-task.txt
+
+

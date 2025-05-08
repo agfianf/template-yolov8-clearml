@@ -8,9 +8,6 @@ resolution-markers = [
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 
-[options]
-resolution-mode = "lowest-direct"
-
 [[package]]
 name = "albucore"
 version = "0.0.24"
@@ -698,11 +695,11 @@ wheels = [
 
 [[package]]
 name = "narwhals"
-version = "1.38.0"
+version = "1.38.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/88/bf/01dd3ed16326a664a4f9cce6ad43f431ba3bea9a2b81e3c07f7a627575ad/narwhals-1.38.0.tar.gz", hash = "sha256:0a356a21ad00de0db0e631332a823a6a6755544bd10b8e68a02d75029c71392e", size = 277086, upload-time = "2025-05-05T14:21:56.936Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/8e/b09c66da823bfcf8afa52990a54d10e79713aa8b2086141b51780282f236/narwhals-1.38.1.tar.gz", hash = "sha256:16d4c13c9e045e1f5b26b289ec307349a9613e83345d1c809be697eb2f7ff938", size = 277326, upload-time = "2025-05-08T09:03:26.805Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/01/419bebadc11896e92f3255e260497e530a0d608debfc2b06221e72c0d60d/narwhals-1.38.0-py3-none-any.whl", hash = "sha256:148de8f1bec24644e260f6f2fe9b8e2e435f49ad13537a5261f0de34701e9153", size = 338257, upload-time = "2025-05-05T14:21:54.641Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/ad/ee9ce2480f52930536c32f3c6444475179eef0b334ab2ad7c7c3a8d60d8b/narwhals-1.38.1-py3-none-any.whl", hash = "sha256:f06fe4227299cb0a554e562ae639c115797b22f35bc3a6ccc95ed5d74212b3d9", size = 338383, upload-time = "2025-05-08T09:03:24.635Z" },
 ]
 
 [[package]]

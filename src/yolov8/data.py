@@ -1,14 +1,16 @@
-from src.utils.clearml_utils import init_clearml
-task = init_clearml()
-
 import os
 import shutil
-from src.data.converter.coco2yolo import Coco2Yolo
-from src.data.downloader.method.cvat import CVATHTTPDownloaderV2, CVATHTTPDownloaderV1
-from src.schema.coco import Coco as CocoSchema
+
+from src.data.converter.coco2yolo import (
+    Coco2Yolo,
+    count_files_in_directory,
+    image_extensions,
+)
+from src.data.downloader.method.cvat import CVATHTTPDownloaderV1, CVATHTTPDownloaderV2
 from src.data.setup import setup_dataset
+from src.schema.coco import Coco as CocoSchema
 from src.utils.general import read_json
-from src.data.converter.coco2yolo import count_files_in_directory, image_extensions
+
 
 class DataHandler:
     def __init__(self, args_data, task_model=None):
@@ -25,35 +27,36 @@ class DataHandler:
         source_type = set()
         for source, d in self.config.items():
             print(source, d)
-            if source == "params" or source == "class_exclude" or source == "attributes_exclude" or source == "area_segment_min":
+            if (
+                source == "params"
+                or source == "class_exclude"
+                or source == "attributes_exclude"
+                or source == "area_segment_min"
+            ):
                 print(f"avoid {source}")
                 continue
 
-            for k, v in d.items():
+            for _, v in d.items():
                 if v is None or v == "" or v == []:
                     continue
                 source_type.add(source)
                 print("add source", source_type)
         if len(source_type) == 1:
             return list(source_type)[0]
-        else:
-            raise ValueError("source must be just 1")
+        raise ValueError("source must be just 1")
 
-
-    def cvat_handler(self, task_model):
-
-        # clean up when do new training 
+    def cvat_handler(self, task_model):  # noqa: ARG002
+        # clean up when do new training
         if os.path.exists(self.dataset_dir):
             shutil.rmtree(self.dataset_dir)
         if os.path.exists(self.dataset_test_dir):
             shutil.rmtree(self.dataset_test_dir)
-            
+
         total_count_files = 0
 
         task_id_train = self.config["cvat"]["task_ids_train"]
         task_id_test = self.config["cvat"]["task_ids_test"]
 
-        
         is_server1, _ = CVATHTTPDownloaderV1().get_about_server()
         is_server2, _ = CVATHTTPDownloaderV2().get_about_server()
         if is_server1:
@@ -64,36 +67,35 @@ class DataHandler:
             cvat_http = CVATHTTPDownloaderV2()
         else:
             raise ValueError("CVAT Server not found")
-            
-        
+
         ls_path_dir_projects = cvat_http.get_local_dataset_coco(
-            task_ids=task_id_train,
-            annotations_only=False
+            task_ids=task_id_train, annotations_only=False
         )
 
         for project_dir in ls_path_dir_projects:
             print("\n📁 Dataset ", project_dir, " 📁")
-            
+
             # get annotations and check task by annotations
-            ann_train_val = os.path.join(project_dir, "annotations", "instances_default.json")
+            ann_train_val = os.path.join(
+                project_dir, "annotations", "instances_default.json"
+            )
             d_anns = read_json(ann_train_val)
             coco = CocoSchema(**d_anns)
             annotation_type = coco.checking_task()
             print("annotation_type", annotation_type, "task_model", self.task_model)
-            use_segments = True if 'segmentation' in annotation_type else False
+            use_segments = "segmentation" in annotation_type
             if self.task_model == "detect":
                 use_segments = False
 
             # converting raw coco -> yolo
             converter = Coco2Yolo(src_dir=project_dir, output_dir=self.dataset_dir)
             output_train, label_names, countfiles = converter.convert(
-                use_segments=use_segments, 
-                exclude_class=self.exclude_cls, 
+                use_segments=use_segments,
+                exclude_class=self.exclude_cls,
                 attributes_excluded=self.attributes_exclude,
-                area_segment_min=self.area_segment_min
+                area_segment_min=self.area_segment_min,
             )
             total_count_files += countfiles
-
 
         if task_id_test == [] or task_id_test is None:
             self.dataset_test_dir = None
@@ -103,17 +105,21 @@ class DataHandler:
                 annotations_only=False,
             )
             for project_dir in ls_path_dir_projects_test:
-                ann_train_val = os.path.join(project_dir, "annotations", "instances_default.json")
+                ann_train_val = os.path.join(
+                    project_dir, "annotations", "instances_default.json"
+                )
                 d_anns = read_json(ann_train_val)
                 coco = CocoSchema(**d_anns)
                 annotation_type = coco.checking_task()
-                use_segments = True if 'segmentation' in annotation_type else False
-                converter = Coco2Yolo(src_dir=project_dir, output_dir=self.dataset_test_dir)
+                use_segments = "segmentation" in annotation_type
+                converter = Coco2Yolo(
+                    src_dir=project_dir, output_dir=self.dataset_test_dir
+                )
                 output_train, label_names, countfiles = converter.convert(
-                    use_segments=use_segments, 
-                    exclude_class=self.exclude_cls, 
-                    attributes_excluded=self.attributes_exclude
-                )   
+                    use_segments=use_segments,
+                    exclude_class=self.exclude_cls,
+                    attributes_excluded=self.attributes_exclude,
+                )
                 total_count_files += countfiles
 
         print("\n🧮 TOTAL COUNT IMAGES", total_count_files)
@@ -124,18 +130,44 @@ class DataHandler:
             label_names=label_names,
             train_ratio=self.config["params"]["train_ratio"],
             valid_ratio=self.config["params"]["val_ratio"],
-            test_ratio=self.config["params"]["test_ratio"]
+            test_ratio=self.config["params"]["test_ratio"],
         )
-        count_imgs_train = count_files_in_directory(os.path.join(self.dataset_dir, "train"), extensions=image_extensions)
-        count_lbls_train = count_files_in_directory(os.path.join(self.dataset_dir, "train"), extensions=["txt"])
-        count_imgs_val = count_files_in_directory(os.path.join(self.dataset_dir, "valid"), extensions=image_extensions)
-        count_lbls_val = count_files_in_directory(os.path.join(self.dataset_dir, "valid"), extensions=["txt"])
-        count_imgs_test = count_files_in_directory(os.path.join(self.dataset_dir, "test"), extensions=image_extensions)
-        count_lbls_test = count_files_in_directory(os.path.join(self.dataset_dir, "test"), extensions=["txt"])
-        print("🧮 [Train] TOTAL COUNT IMAGES", count_imgs_train, "| TOTAL COUNT LABELS", count_lbls_train)
-        print("🧮 [Val] TOTAL COUNT IMAGES", count_imgs_val, "| TOTAL COUNT LABELS", count_lbls_val)
-        print("🧮 [Test] TOTAL COUNT IMAGES", count_imgs_test, "| TOTAL COUNT LABELS", count_lbls_test)
-
+        count_imgs_train = count_files_in_directory(
+            os.path.join(self.dataset_dir, "train"), extensions=image_extensions
+        )
+        count_lbls_train = count_files_in_directory(
+            os.path.join(self.dataset_dir, "train"), extensions=["txt"]
+        )
+        count_imgs_val = count_files_in_directory(
+            os.path.join(self.dataset_dir, "valid"), extensions=image_extensions
+        )
+        count_lbls_val = count_files_in_directory(
+            os.path.join(self.dataset_dir, "valid"), extensions=["txt"]
+        )
+        count_imgs_test = count_files_in_directory(
+            os.path.join(self.dataset_dir, "test"), extensions=image_extensions
+        )
+        count_lbls_test = count_files_in_directory(
+            os.path.join(self.dataset_dir, "test"), extensions=["txt"]
+        )
+        print(
+            "🧮 [Train] TOTAL COUNT IMAGES",
+            count_imgs_train,
+            "| TOTAL COUNT LABELS",
+            count_lbls_train,
+        )
+        print(
+            "🧮 [Val] TOTAL COUNT IMAGES",
+            count_imgs_val,
+            "| TOTAL COUNT LABELS",
+            count_lbls_val,
+        )
+        print(
+            "🧮 [Test] TOTAL COUNT IMAGES",
+            count_imgs_test,
+            "| TOTAL COUNT LABELS",
+            count_lbls_test,
+        )
 
     def export(self, task_model):
         if self.source_type == "s3":
@@ -145,23 +177,34 @@ class DataHandler:
         elif self.source_type == "label_studio":
             pass
         else:
-            raise ValueError("Cek config datanya pak. source must be s3, cvat or label_studio")
-        
+            raise ValueError(
+                "Cek config datanya pak. source must be s3, cvat or label_studio"
+            )
+
         return self.dataset_dir
-    
+
+
 if __name__ == "__main__":
-    from src.utils.clearml_utils import init_clearml
+    from utils.clearml_settings import init_clearml
+
     task = init_clearml()
-    
-    from src.config import (
-        args_augment, args_export, args_logging,
-        args_task, args_data, args_train, args_val
+
+    from schema.params import (  # noqa: F401
+        args_augment,
+        args_data,
+        args_export,
+        args_logging,
+        args_task,
+        args_train,
+        args_val,
     )
-    
-    from src.utils.general import get_task_yolo_name, yaml_loader, model_name_handler
+    from src.utils.general import (  # noqa: F401
+        get_task_yolo_name,
+        model_name_handler,
+        yaml_loader,
+    )
 
     task_yolo = get_task_yolo_name(args_task["model_name"])
 
     handler = DataHandler(args_data=args_data, task_model=task_yolo)
     dataset_folder = handler.export(task_model=task_yolo)
-    
