@@ -16,7 +16,10 @@ exclude = [
   "./docs",
   "./var",
   "./.vscode",
-  "src/migrations/*"
+  "src/migrations/*",
+  "Debug/*",
+  "tmp-cvat/*",
+  "dataset-yolov8/*",
 ]
 
 [lint.isort]
