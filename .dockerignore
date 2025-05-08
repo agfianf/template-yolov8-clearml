@@ -2,3 +2,7 @@ datasets-yolo/*
 test/*
 tmp/*
 *.pt
+tmp*
+testing-debug-ds/*
+tests/
+Debug/

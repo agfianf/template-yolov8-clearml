@@ -1,13 +1,4 @@
-# Ultralytics YOLO 🚀, GPL-3.0 license
-# Builds ultralytics/ultralytics:latest image on DockerHub https://hub.docker.com/r/ultralytics/ultralytics
-# Image is CUDA-optimized for YOLOv8 single/multi-GPU training and inference
-
-# Start FROM NVIDIA PyTorch image https://ngc.nvidia.com/catalog/containers/nvidia:pytorch
-# FROM docker.io/pytorch/pytorch:latest
-FROM python:3.10.11-slim
-
-# Downloads to user config dir
-ADD https://ultralytics.com/assets/Arial.ttf https://ultralytics.com/assets/Arial.Unicode.ttf /root/.config/Ultralytics/
+FROM python:3.11-slim
 
 # Install linux packages
 ENV DEBIAN_FRONTEND noninteractive
@@ -20,10 +11,8 @@ RUN apt install --no-install-recommends -y gcc git zip curl htop libgl1-mesa-glx
 WORKDIR /workspace
 
 # Install pip packages
-RUN python3 -m pip install --upgrade pip wheel
-
-# RUN pip install torch==2.0.0+cu117 torchvision==0.15.1+cu117 --index-url https://download.pytorch.org/whl/cu117
-# RUN pip install --upgrade git+https://github.com/muhammadAgfian96/ultralytics.git@feat/disable-callbacks#egg=ultralytics
+RUN pip install torch torchvision
+RUN pip install --upgrade pip wheel
 COPY requirements.txt /deps/requirements.txt
 RUN pip install -r /deps/requirements.txt
 

@@ -15,7 +15,7 @@ class MinioDatasetDownloader:
         self.__access_key = "bs_server_1"
         self.__secret_key = "zNAYleEDeCnlzaXJsd7MvXnQhPmZehIA"
         self.bucket_name = "app-data-workflow"
-        self.region = "binsho-server-2"
+        self.region = "xxxx-server-2"
 
         # Create a Minio client with the given credentials
         self.minio_client = Minio(

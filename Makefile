@@ -6,10 +6,9 @@ run:
 	-it --rm --gpus all \
 	-v ${PWD}:/workspace \
 	-u $(id -u):$(id -g) \
-	-e ULTRALYTICS_CLEARML_DISABLED=true \
 	-e PYTHONPATH=/workspace \
 	-w /workspace \
-	-v ${PWD}/clearml.conf:/root/clearml.conf \
+	-v ${PWD}/sawit.clearml.conf:/root/clearml.conf \
 	$(IMAGE_NAME) \
 	bash
 

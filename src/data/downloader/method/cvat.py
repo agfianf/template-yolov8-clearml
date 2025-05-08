@@ -10,14 +10,15 @@ from typing import List
 from src.data.downloader.base_downloader import BaseDownloader
 from cvat_sdk import make_client
 from rich import print
+import src.env as env
 
 
 class CVATHTTPDownloaderV1(BaseDownloader):
     def __init__(self):
-        __URL_CVAT = os.getenv("CVAT_HOST")
-        __USERNAME_CVAT = os.getenv("CVAT_USERNAME")
-        __PASSWORD_CVAT = os.getenv("CVAT_PASSWORD")
-        __OUTPUT_DIR_TMP = os.getenv("TMP_DIR_CVAT")
+        __URL_CVAT = env.CVAT_HOST
+        __USERNAME_CVAT = env.CVAT_USERNAME
+        __PASSWORD_CVAT = env.CVAT_PASSWORD
+        __OUTPUT_DIR_TMP = env.TMP_DIR_CVAT
         __FORMAT_DATA = os.getenv("CVAT_FORMAT_DATA")
 
         if __URL_CVAT is None or __USERNAME_CVAT is None or __PASSWORD_CVAT is None:
@@ -116,7 +117,13 @@ class CVATHTTPDownloaderV1(BaseDownloader):
         else:
             download_url = urljoin(self.base_url, f'tasks/{task_id}/dataset?format=COCO%201.0')
         task_info = self.get_task_info(task_id=task_id)
-        project_info = self.get_project_info(task_info=task_info)
+        try:
+            project_info = self.get_project_info(task_info=task_info)
+        except Exception as e:
+            print(download_url, e)
+            raise Exception(f"ERROR taskid: {task_id} | task_info response=", task_info, e)
+            
+
 
         timeout_start = time.time()
         first_exporting_progress = False
@@ -128,7 +135,7 @@ class CVATHTTPDownloaderV1(BaseDownloader):
 
             if response.status_code == 202 and first_exporting_progress:
                 first_exporting_progress = True
-                print('🍆', end='', flush=True)
+                print('🍆', end='\r', flush=True)
             else:
                 self.print_task_status(response)
             
@@ -163,12 +170,12 @@ class CVATHTTPDownloaderV1(BaseDownloader):
 
 class CVATHTTPDownloaderV2(BaseDownloader):
     def __init__(self):
-        __URL_CVAT = env.CVAT_SERVER_HOST
-        __USERNAME_CVAT = env.CVAT_SERVER_USERNAME
-        __PASSWORD_CVAT = env.CVAT_SERVER_PASSWORD
+        __URL_CVAT = env.CVAT_HOST
+        __USERNAME_CVAT = env.CVAT_USERNAME
+        __PASSWORD_CVAT = env.CVAT_PASSWORD
         __OUTPUT_DIR_TMP = env.TMP_DIR_CVAT
-        __ORGANIZATION = env.CVAT_SERVER_ORGANIZATION
-        __FORMAT_DATA = env.CVAT_SERVER_FORMAT_DATA
+        __ORGANIZATION = env.CVAT_ORGANIZATION
+        __FORMAT_DATA = env.CVAT_FORMAT_DATA
 
         if __URL_CVAT is None or __USERNAME_CVAT is None or __PASSWORD_CVAT is None:
             raise Exception('CVAT_HOST, CVAT_USERNAME, CVAT_PASSWORD must be set')
@@ -214,12 +221,10 @@ class CVATHTTPDownloaderV2(BaseDownloader):
     @staticmethod
     def save_file(response, file_name):
         total_size_mb = round(len(response.content)/1024000, 2)
-        print('Downloading', file_name)
-        print('TOTAL SIZE: ', total_size_mb, 'MB')
+        print('Downloading', file_name, ' | SIZE: ', total_size_mb, 'MB')
         with open(file_name, 'wb') as f:
             for chunk in tqdm(response.iter_content(chunk_size=1024000), total=total_size_mb, ncols=72):
                 f.write(chunk)
-        print('Downloaded: ', total_size_mb, 'MB')
 
     def extract_file(self, file_name, project_info, task_info):
         with zipfile.ZipFile(file_name, 'r') as zip_ref:
@@ -283,7 +288,7 @@ class CVATHTTPDownloaderV2(BaseDownloader):
 
             if response.status_code == 202 and first_exporting_progress:
                 first_exporting_progress = True
-                print('🍆', end='', flush=True)
+                print('🍆', end='\r', flush=True)
             else:
                 self.print_task_status(response)
             

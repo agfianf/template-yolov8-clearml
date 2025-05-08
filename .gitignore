@@ -61,3 +61,4 @@ tmp_dir_cvat/
 tmp_dir_label_studio/
 myagent.conf
 Debug/*
+testing-debug-ds/*

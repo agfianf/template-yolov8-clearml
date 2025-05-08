@@ -50,11 +50,13 @@ class Coco(BaseModel):
 
     def get_categoryid_to_namecat(self, exclude_class:List[str]=[])->Dict[int, str]:
         categories_map = {}
-        exclude_class  = [lbl.lower() for lbl in exclude_class]
-        print("WE EXCLUDE CLASS:", exclude_class)
+        # exclude_class  = [lbl.lower() for lbl in exclude_class]
+        # if len(exclude_class) > 0:
+        #     print("WE EXCLUDE CLASS:", exclude_class)
+
         for cat in self.categories:
-            if cat.name not in exclude_class:
-                categories_map[cat.id] = cat.name
+            # if cat.name not in exclude_class: 
+            categories_map[cat.id] = cat.name
         return categories_map
 
     def get_imageid_to_image(self) -> Dict[int, Image]:
@@ -63,17 +65,57 @@ class Coco(BaseModel):
             image_map[img.id] = img
         return image_map
     
-    def get_imageid_to_annotations(self, exclude_class:List[str]=[])->Dict[int, List[Annotation]]:
+    def get_imageid_to_annotations(self, 
+            exclude_class:List[str]=[],  
+            attributes_excluded:Dict[str, str]=None,
+            area_segment_min:float=None
+        )->Dict[int, List[Annotation]]:
+        """
+        This function will return a dictionary of image_id to annotations
+        and filters in level annotations happen here
+        """
+        if exclude_class is None:
+            exclude_class = []
+
         imageid2anns = defaultdict(list)
         exclude_class  = [lbl.lower() for lbl in exclude_class]
         id2label = self.get_categoryid_to_namecat()
         print(id2label)
+        
 
         for ann in self.annotations:
-            if id2label[ann.category_id] not in exclude_class:
-                imageid2anns[ann.image_id].append(ann)
-            else:
-                print(id2label[ann.category_id], "Exclude")
+            skip = False
+            if area_segment_min is not None:
+                if ann.area < area_segment_min:
+                    print(f"[Area Filters Active] minimal: {area_segment_min} | actual:", ann.area)
+                    skip = True
+                    continue
+                
+            if attributes_excluded is not None:
+                for attr_name, attr_value in attributes_excluded.items():
+                    attributes_dataset = set(ann.attributes.get(attr_name).replace(", ", ",").replace(" ,", ",").split(","))
+                    attributes_config = set(attr_value.replace(", ", ",").replace(" ,", ",").split(","))
+                    if attributes_dataset is None:
+                        continue
+                    
+                    # print("attributes_excluded", attributes_excluded, ann.attributes)
+                    if isinstance(attributes_dataset, set):
+                        intersection = attributes_config.intersection(attributes_dataset)
+                        if intersection:
+                            print("[Attributes Filters Active]", attr_name, attributes_config, attributes_dataset)
+                            skip = True
+                            break
+                        break
+
+            if id2label[ann.category_id] in exclude_class:
+                print("[Class Filters]",id2label[ann.category_id], "Class Exclude")
+                skip = True
+            
+            if skip:
+                continue
+
+            imageid2anns[ann.image_id].append(ann)
+
         return imageid2anns
 
 

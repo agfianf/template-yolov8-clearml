@@ -49,24 +49,13 @@ args_logging = {
 }
 
 args_task = {
-    "model_name": "yolov8m"
+    "model_name": "yolov8n",
+    # "pretrained": "(model_id)"
 }
 
 args_data = {
     "cvat": {
-        "task_ids_train": [
-            174, 
-            179, 
-            182, 
-            # 184, 
-            186, 
-            190, 
-            191, 
-            192, 
-            193, 
-            196, 
-            250,
-        ],
+        "task_ids_train": [292, 288, 290],
         "task_ids_test": [],
     },
     "label_studio": {
@@ -79,15 +68,18 @@ args_data = {
         "val_ratio": 0.2,
         "test_ratio": None,
     },
-    "exclude": "stack, foreign_object"
+    "class_exclude": None,
+    # "attributes_exclude": {"maturity_truth": "background"},
+    "attributes_exclude": None,
+    "area_segment_min": 0,
 }
 
 
 args_train = {
     "augment": True,            
-    "epochs": 800,              # number of epochs to train for
-    "patience": 0,             # epochs to wait for no observable improvement for early stopping of training
-    "batch": 32,                # number of images per batch (-1 for AutoBatch)
+    "epochs": 5,              # number of epochs to train for
+    "patience": 30,             # epochs to wait for no observable improvement for early stopping of training
+    "batch": 1,                # number of images per batch (-1 for AutoBatch)
     "imgsz": 640,               # size of input images as integer or w,h
     "save": True,               # save train checkpoints and predict results
     "save_period": -1,          # Save checkpoint every x epochs (disabled if < 1)
@@ -98,8 +90,8 @@ args_train = {
     "name": None,               # experiment name
     "exist_ok": True,          # whether to overwrite existing experiment
     "pretrained": True,        # whether to use a pretrained model
-    "optimizer": "AdamW",        # optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]
-    "verbose": False,           # whether to print verbose output
+    "optimizer": "auto",        # optimizer to use, choices=[SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, auto]
+    "verbose": True,           # whether to print verbose output
     "seed": 0,                  # random seed for reproducibility
     "deterministic": True,      # whether to enable deterministic mode
     "single_cls": False,        # train multi-class data as single-class
@@ -131,10 +123,10 @@ args_train = {
 }
 
 args_val = {
-    "batch": 16,            # number of images per batch (-1 for AutoBatch)
+    "batch": 1,            # number of images per batch (-1 for AutoBatch)
     "save_json": False,     # save results to JSON file
     "save_hybrid": False,   # save hybrid version of labels (labels + additional predictions)
-    "conf": 0.5,          # object confidence threshold for detection
+    "conf": 0.35,          # object confidence threshold for detection
     "iou": 0.6,             # intersection over union (IoU) threshold for NMS
     "max_det": 100,        # maximum number of detections per image
     "half": True,           # use half precision (FP16)

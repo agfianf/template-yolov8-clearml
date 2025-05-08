@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
-
-load_dotenv('/workspace/src/.env')
+# load_dotenv('/workspace/src/.env')
+load_dotenv()
 
 CVAT_USERNAME = os.getenv("CVAT_USERNAME")
 CVAT_PASSWORD = os.getenv("CVAT_PASSWORD")
