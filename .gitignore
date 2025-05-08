@@ -63,3 +63,4 @@ myagent.conf
 Debug/*
 testing-debug-ds/*
 clearml.conf
+*.env

@@ -16,6 +16,7 @@ dependencies = [
     "pillow>=11.2.1",
     "plotly==6.0.1",
     "pydantic==2.11.4",
+    "pydantic-settings>=2.9.1",
     "python-dotenv>=1.1.0",
     "python-multipart>=0.0.20",
     "pyyaml>=6.0.2",
