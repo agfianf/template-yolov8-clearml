@@ -50,12 +50,13 @@ args_logging = {
 
 args_task = {
     "model_name": "yolov8n",
+    "model_latest_id": ""
     # "pretrained": "(model_id)"
 }
 
 args_data = {
     "cvat": {
-        "task_ids_train": [292, 288, 290],
+        "task_ids_train": [48],
         "task_ids_test": [],
     },
     "label_studio": {
@@ -77,9 +78,9 @@ args_data = {
 
 args_train = {
     "augment": True,            
-    "epochs": 5,              # number of epochs to train for
-    "patience": 30,             # epochs to wait for no observable improvement for early stopping of training
-    "batch": 1,                # number of images per batch (-1 for AutoBatch)
+    "epochs": 1000,              # number of epochs to train for
+    "patience": 0,             # epochs to wait for no observable improvement for early stopping of training
+    "batch": 2,                # number of images per batch (-1 for AutoBatch)
     "imgsz": 640,               # size of input images as integer or w,h
     "save": True,               # save train checkpoints and predict results
     "save_period": -1,          # Save checkpoint every x epochs (disabled if < 1)

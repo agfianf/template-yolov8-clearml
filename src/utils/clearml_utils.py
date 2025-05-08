@@ -1,6 +1,6 @@
 import os
 
-from clearml import Task
+from clearml import InputModel, Task
 
 from src.config import (
     args_augment,
@@ -26,7 +26,7 @@ def init_clearml():
 
         task.set_script(
             repository="https://github.com/muhammadAgfian96/template-yolov8-clearml.git",
-            branch="public",
+            # branch="public",
             working_dir=".",
             entry_point="src/train.py",
         )
@@ -67,6 +67,14 @@ def config_clearml():
     if exclude_data is None:
         exclude_data = ""
     ls_exclude = exclude_data.replace(", ", ",").replace(" ,", ",").split(",")
+
+    if args_task["model_latest_id"] != "":
+        print("Downloading latest model")
+        latest_model = InputModel(model_id=args_task["model_latest_id"])
+        path_latest_model = latest_model.get_weights()
+        args_train["resume"] = True
+        args_task["model_name"] = path_latest_model
+        print("▶️ Resume training from", latest_model)
 
     args_train.update(args_logging)
     args_train.update(args_augment)

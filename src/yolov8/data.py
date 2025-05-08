@@ -8,6 +8,7 @@ from src.data.downloader.method.cvat import CVATHTTPDownloaderV2, CVATHTTPDownlo
 from src.schema.coco import Coco as CocoSchema
 from src.data.setup import setup_dataset
 from src.utils.general import read_json
+from src.data.converter.coco2yolo import count_files_in_directory, image_extensions
 
 class DataHandler:
     def __init__(self, args_data, task_model=None):
@@ -52,14 +53,26 @@ class DataHandler:
         task_id_train = self.config["cvat"]["task_ids_train"]
         task_id_test = self.config["cvat"]["task_ids_test"]
 
-        cvat_http = CVATHTTPDownloaderV1()
+        
+        is_server1, _ = CVATHTTPDownloaderV1().get_about_server()
+        is_server2, _ = CVATHTTPDownloaderV2().get_about_server()
+        if is_server1:
+            print("CVAT Server V1")
+            cvat_http = CVATHTTPDownloaderV1()
+        elif is_server2:
+            print("CVAT Server V2")
+            cvat_http = CVATHTTPDownloaderV2()
+        else:
+            raise ValueError("CVAT Server not found")
+            
+        
         ls_path_dir_projects = cvat_http.get_local_dataset_coco(
             task_ids=task_id_train,
             annotations_only=False
         )
 
         for project_dir in ls_path_dir_projects:
-            print("\n📁 Dataset DIR ", project_dir, " 📁")
+            print("\n📁 Dataset ", project_dir, " 📁")
             
             # get annotations and check task by annotations
             ann_train_val = os.path.join(project_dir, "annotations", "instances_default.json")
@@ -73,12 +86,14 @@ class DataHandler:
 
             # converting raw coco -> yolo
             converter = Coco2Yolo(src_dir=project_dir, output_dir=self.dataset_dir)
-            output_train, label_names = converter.convert(
+            output_train, label_names, countfiles = converter.convert(
                 use_segments=use_segments, 
                 exclude_class=self.exclude_cls, 
                 attributes_excluded=self.attributes_exclude,
                 area_segment_min=self.area_segment_min
             )
+            total_count_files += countfiles
+
 
         if task_id_test == [] or task_id_test is None:
             self.dataset_test_dir = None
@@ -101,7 +116,7 @@ class DataHandler:
                 )   
                 total_count_files += countfiles
 
-        print("🧮 total_count_files", total_count_files)
+        print("\n🧮 TOTAL COUNT IMAGES", total_count_files)
         print("label_names:", label_names)
         setup_dataset(
             dataset_dir=self.dataset_dir,
@@ -111,7 +126,15 @@ class DataHandler:
             valid_ratio=self.config["params"]["val_ratio"],
             test_ratio=self.config["params"]["test_ratio"]
         )
-
+        count_imgs_train = count_files_in_directory(os.path.join(self.dataset_dir, "train"), extensions=image_extensions)
+        count_lbls_train = count_files_in_directory(os.path.join(self.dataset_dir, "train"), extensions=["txt"])
+        count_imgs_val = count_files_in_directory(os.path.join(self.dataset_dir, "valid"), extensions=image_extensions)
+        count_lbls_val = count_files_in_directory(os.path.join(self.dataset_dir, "valid"), extensions=["txt"])
+        count_imgs_test = count_files_in_directory(os.path.join(self.dataset_dir, "test"), extensions=image_extensions)
+        count_lbls_test = count_files_in_directory(os.path.join(self.dataset_dir, "test"), extensions=["txt"])
+        print("🧮 [Train] TOTAL COUNT IMAGES", count_imgs_train, "| TOTAL COUNT LABELS", count_lbls_train)
+        print("🧮 [Val] TOTAL COUNT IMAGES", count_imgs_val, "| TOTAL COUNT LABELS", count_lbls_val)
+        print("🧮 [Test] TOTAL COUNT IMAGES", count_imgs_test, "| TOTAL COUNT LABELS", count_lbls_test)
 
 
     def export(self, task_model):

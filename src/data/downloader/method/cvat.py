@@ -29,6 +29,15 @@ class CVATHTTPDownloaderV1(BaseDownloader):
         self.data_format = __FORMAT_DATA
         self.download_dir = __OUTPUT_DIR_TMP
         os.makedirs(self.download_dir, exist_ok=True)
+        
+    def get_about_server(self):
+        response = requests.get(
+            url=urljoin(self.base_url, 'server/about'), 
+            auth=self.auth,
+        )
+        if response.status_code == 200:
+            return True, response.json()
+        return False, response.text
 
     def get_task_info(self, task_id: int):
         task_url = urljoin(self.base_url, f'tasks/{task_id}')
@@ -186,6 +195,15 @@ class CVATHTTPDownloaderV2(BaseDownloader):
         self.organization = __ORGANIZATION
         self.download_dir = __OUTPUT_DIR_TMP
         os.makedirs(self.download_dir, exist_ok=True)
+
+    def get_about_server(self):
+        response = requests.get(
+            url=urljoin(self.base_url, 'server/about'), 
+            auth=self.auth,
+        )
+        if response.status_code == 200:
+            return True, response.json()
+        return False, response.text
 
     def get_task_info(self, task_id: int):
         task_url = urljoin(self.base_url, f'tasks/{task_id}')

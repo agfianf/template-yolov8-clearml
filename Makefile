@@ -8,7 +8,7 @@ run:
 	-u $(id -u):$(id -g) \
 	-e PYTHONPATH=/workspace \
 	-w /workspace \
-	-v ${PWD}/sawit.clearml.conf:/root/clearml.conf \
+	-v ${PWD}/ikan.clearml.conf:/root/clearml.conf \
 	$(IMAGE_NAME) \
 	bash
 

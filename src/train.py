@@ -24,8 +24,13 @@ Task.current_task().add_tags(f"yv8-{ultralytics.__version__}")
 Task.current_task().execute_remotely()
 
 task_yolo = get_task_yolo_name(args_task["model_name"])
-model_name = model_name_handler(args_task["model_name"])
+if not args_train["resume"]:
+    model_name = model_name_handler(args_task["model_name"])
+else:
+    Task.current_task().add_tags("resume")
+    model_name = args_task["model_name"]
 print("TASK_YOLO", task_yolo)
+
 # Download Data
 print("\n[Downloading Data]")
 handler = DataHandler(args_data=args_data, task_model=task_yolo)
@@ -43,13 +48,17 @@ Task.current_task().add_tags(task_yolo)
 Task.current_task().add_tags(os.path.basename(model_name).replace('.pt', ''))
 Task.current_task().add_tags(handler.source_type.upper())
 
+
 # Utils
 Task.current_task().set_model_label_enumeration(
     {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
 )
 print("datadotyaml", datadotyaml)
 
+print("\n[Training]")
+print("LOAD MODEL", model_name)
 model_yolo = YOLO(model=model_name)
+
 
 print("Override Callbacks")
 for event, func in callbacks.items():
@@ -57,7 +66,17 @@ for event, func in callbacks.items():
     model_yolo.add_callback(event, func)
 
 args_val["imgsz"] = args_train["imgsz"]
-model_yolo.train(data=data_yaml_file, **args_train)
+if args_train["resume"]:
+    print("RESUME TRAINING")
+    model_yolo.resume = True
+    model_yolo.train(
+        data=data_yaml_file, 
+        epochs=args_train["epochs"], 
+        batch=args_train["batch"],
+        patience=args_train["patience"]
+    )
+else:
+    model_yolo.train(data=data_yaml_file, **args_train)
 
 cleanup_cache(dataset_folder)
 if datadotyaml.get('test'):

@@ -23,11 +23,11 @@ pyYAML==6.0.1
 python-dotenv==1.0.0
 
 # formats models
-coremltools==6.3.0
-onnx==1.14.1
-onnx-simplifier==0.4.33
-onnxruntime==1.15.1
-openvino-dev>=2023.1.0
+# coremltools==6.3.0
+# onnx==1.14.1
+# onnx-simplifier==0.4.33
+# onnxruntime==1.15.1
+# openvino-dev>=2023.1.0
 # nvidia-tensorrt
 # tensorflow 
 # tensorflowjs
