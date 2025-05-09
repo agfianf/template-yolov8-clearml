@@ -5,6 +5,8 @@ tmp-cvat/
 tests/
 tmp/
 .venv/
+runs/
+YOLO11/
 
 # Exclude .pt files recursively
 **/*.pt

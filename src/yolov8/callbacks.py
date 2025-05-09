@@ -131,6 +131,24 @@ def on_train_epoch_end(trainer: BaseTrainer):
         # print("trainer", trainer.metrics)  # noqa: ERA001
         # print("trainer.validator.metrics",trainer.validator.metrics.results_dict)  # noqa: E501, ERA001
         for k, v in trainer.validator.metrics.results_dict.items():
+            if k == "fitness":
+                task.get_logger().report_scalar("fitness", k, v, iteration=trainer.epoch)
+                continue
+            if "precision" in k:
+                task.get_logger().report_scalar(
+                    "precision",
+                    k,
+                    v,
+                    iteration=trainer.epoch,
+                )
+                continue
+            if "recall" in k:
+                task.get_logger().report_scalar("recall", k, v, iteration=trainer.epoch)
+                continue
+            if "mAP50" in k:
+                task.get_logger().report_scalar("mAP50", k, v, iteration=trainer.epoch)
+                continue
+
             task.get_logger().report_scalar("train", k, v, iteration=trainer.epoch)
 
         for k, v in trainer.metrics.items():

@@ -7,6 +7,7 @@ from src.params import (
     args_data,
     args_export,
     args_logging,
+    args_predict,
     args_task,
     args_train,
     args_val,
@@ -67,7 +68,8 @@ def config_clearml():
     curr_task.connect(args_augment, name="3_Augment")
     curr_task.connect(args_train, name="4_Training")
     curr_task.connect(args_val, name="5_Testing")
-    curr_task.connect(args_export, name="6_Export")
+    curr_task.connect(args_predict, name="6_Predict")
+    curr_task.connect(args_export, name="7_Export")
 
     exclude_data = args_data.get("class_exclude", "")
     if exclude_data is None:
@@ -87,5 +89,14 @@ def config_clearml():
     args_data.update({"class_exclude": ls_exclude})
     args_data.update({"attributes_exclude": args_data.get("attributes_exclude", {})})
     args_data.update({"area_segment_min": args_data.get("area_segment_min", None)})
+    args_predict.update(args_predict)
 
-    return args_task, args_data, args_augment, args_train, args_val, args_export
+    return (
+        args_task,
+        args_data,
+        args_augment,
+        args_train,
+        args_val,
+        args_export,
+        args_predict,
+    )

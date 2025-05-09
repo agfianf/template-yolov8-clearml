@@ -19,9 +19,9 @@ args_augment = {
 
 args_export = {
     "format": {
-        "torchscript": 1,  # TorchScript
-        "onnx": 1,  # ONNX
-        "openvino": 1,  # OpenVINO
+        "torchscript": 0,  # TorchScript
+        "onnx": 0,  # ONNX
+        "openvino": 0,  # OpenVINO
         "engine": 0,  # TensorRT
         "coreml": 0,  # CoreML
         "saved_model": 0,  # TensorFlow SavedModel
@@ -80,9 +80,9 @@ args_data = {
 
 args_train = {
     "augment": True,
-    "epochs": 3,  # number of epochs to train for
+    "epochs": 20,  # number of epochs to train for
     "patience": 0,  # epochs to wait for no observable improvement for early stopping of training # noqa: E501
-    "batch": 32,  # number of images per batch (-1 for AutoBatch)
+    "batch": 64,  # number of images per batch (-1 for AutoBatch)
     "imgsz": 640,  # size of input images as integer or w,h
     "save": True,  # save train checkpoints and predict results
     "save_period": -1,  # Save checkpoint every x epochs (disabled if < 1)
@@ -126,11 +126,11 @@ args_train = {
 }
 
 args_val = {
-    "batch": -1,  # number of images per batch (-1 for AutoBatch)
+    "batch": 16,  # number of images per batch (-1 for AutoBatch)
     "save_json": False,  # save results to JSON file
     "save_hybrid": False,  # save hybrid version of labels (labels + additional predictions)  # noqa: E501
-    "conf": 0.35,  # object confidence threshold for detection
-    "iou": 0.6,  # intersection over union (IoU) threshold for NMS
+    "conf": 0.25,  # object confidence threshold for detection
+    "iou": 0.7,  # intersection over union (IoU) threshold for NMS
     "max_det": 100,  # maximum number of detections per image
     "half": True,  # use half precision (FP16)
     "device": 0,  # device to run on, i.e. cuda device=0/1/2/3 or device=cpu
@@ -139,4 +139,27 @@ args_val = {
     "rect": False,  # rectangular val with each batch collated for minimum padding
     "save_crop": True,  # save cropped images
     "split": "val",  # dataset split to use for validation, i.e. 'val', 'test' or 'train'
+}
+
+
+args_predict = {
+    "max_images": 40,  # maximum number of images to predict
+    "plot": {
+        "conf": True,
+        "kpt_radius": 5,
+        "kpt_line": True,
+        "labels": False,
+        "boxes": True,
+        "masks": True,
+        "probs": True,
+        "color_mode": "instance",  # class or instance
+        "txt_color": (255, 255, 255),
+    },
+    "model": {
+        "batch": 16,
+        "conf": 0.25,  # object confidence threshold for detection
+        "iou": 0.7,  # intersection over union (IoU) threshold for NMS
+        "max_det": 1000,  # maximum number of detections per image
+        "stream": True,  # stream mode for real-time inference
+    },
 }
