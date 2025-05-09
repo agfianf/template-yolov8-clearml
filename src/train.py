@@ -21,6 +21,7 @@ def main():
     init_ultralytics_settings()
     task: Task = init_clearml()
 
+    # configuration params
     (
         args_task,
         args_data,
@@ -30,29 +31,21 @@ def main():
         args_export,
     ) = config_clearml()
 
-    # tagging
-
     task.execute_remotely()
 
-    task_yolo = get_task_yolo_name(args_task["model_name"])
-    if not args_train["resume"]:
-        model_name = model_name_handler(args_task["model_name"])
-    else:
-        Task.current_task().add_tags("resume")
-        model_name = args_task["model_name"]
-    print("TASK_YOLO", task_yolo)
+    # Set Task Name
+    task_yolo, model_name = set_task_name_on_experiment(args_task, args_train)
 
     # Download Data
     print("\n[Downloading Data]")
     handler = DataHandler(args_data=args_data, task_model=task_yolo)
-    dataset_folder = handler.export(task_model=task_yolo)
+    dataset_folder = handler.export()
 
     data_yaml_file = os.path.join(dataset_folder, "data.yaml")
     if task_yolo == "classify":
         data_yaml_file = dataset_folder
     if task_yolo == "segment":
         args_train["augment"] = False
-    datadotyaml = yaml_loader(data_yaml_file)
 
     # Tagging
     task.add_tags(f"ul-{ultralytics.__version__}")
@@ -61,10 +54,10 @@ def main():
     task.add_tags(handler.source_type.upper())
 
     # Utils
-    Task.current_task().set_model_label_enumeration(
-        {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
-    )
-    print("datadotyaml", datadotyaml)
+    datadotyaml = yaml_loader(data_yaml_file)
+    class_2_idx = {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
+    task.set_model_label_enumeration(class_2_idx)
+    print("datadotyaml", datadotyaml, "class_2_idx", class_2_idx)
 
     print("\n[Training]")
     print("LOAD MODEL", model_name)
@@ -76,8 +69,9 @@ def main():
         model_yolo.add_callback(event, func)
 
     args_val["imgsz"] = args_train["imgsz"]
+
     if args_train["resume"]:
-        print("RESUME TRAINING")
+        print(">>> RESUME TRAINING <<<")
         model_yolo.resume = True
         model_yolo.train(
             data=data_yaml_file,
@@ -89,6 +83,7 @@ def main():
         model_yolo.train(data=data_yaml_file, **args_train)
 
     cleanup_cache(dataset_folder)
+
     if datadotyaml.get("test"):
         args_val["split"] = "test"
     try:
@@ -96,6 +91,7 @@ def main():
     except Exception as e:
         print("Error Validation", e)
 
+    print("\n[Exporting Model]")
     export_handler(
         yolo=model_yolo,
         task_yolo=task_yolo,
@@ -104,6 +100,17 @@ def main():
         args_training=args_train,
         args_task=args_task,
     )
+
+
+def set_task_name_on_experiment(args_task, args_train):
+    task_yolo = get_task_yolo_name(args_task["model_name"])
+    if not args_train["resume"]:
+        model_name = model_name_handler(args_task["model_name"])
+    else:
+        Task.current_task().add_tags("resume")
+        model_name = args_task["model_name"]
+    print("TASK_YOLO", task_yolo)
+    return task_yolo, model_name
 
 
 if __name__ == "__main__":
