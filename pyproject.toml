@@ -5,7 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-    "albumentations>=2.0.6",
+    "albumentations==2.0.6",
+    "clearml-agent==1.9.3",
     "clearml[s3]==1.18.0",
     "cvat-sdk==2.35.0",
     "httpx==0.28.1",
@@ -20,7 +21,6 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "python-multipart>=0.0.20",
     "pyyaml>=6.0.2",
-    "requests>=2.32.3",
     "rich>=14.0.0",
     "roboflow==1.1.63",
     "tqdm==4.67.1",
