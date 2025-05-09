@@ -35,21 +35,13 @@ def init_clearml() -> Task:
             entry_point="src/train.py",
         )
 
-        curr_task.set_base_docker(
-            docker_image="yolov11-binsho:py3.12",
-            docker_arguments=[
-                "--gpus all",
-                "--ipc=host",
-                "--shm-size=24g",
-            ],
-        )
-
     curr_task.set_base_docker(
         docker_image="yolov11-binsho:py3.12",
         docker_arguments=[
+            "-e PYTHONPATH=/workspace",
             "--gpus all",
             "--ipc=host",
-            "--shm-size=8gb",
+            "--shm-size=50gb",
         ],
     )
 
