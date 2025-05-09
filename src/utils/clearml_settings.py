@@ -38,6 +38,8 @@ def init_clearml() -> Task:
     curr_task.set_base_docker(
         docker_image="yolov11-binsho:py3.12",
         docker_arguments=[
+            "-e CLEARML_AGENT_SKIP_PYTHON_ENV_INSTALL=1",
+            "-e CLEARML_AGENT_SKIP_PIP_VENV_INSTALL=/workspace/.venv/bin/python",
             "-e PYTHONPATH=/workspace",
             "--gpus all",
             "--ipc=host",
