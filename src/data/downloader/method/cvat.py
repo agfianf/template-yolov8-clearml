@@ -21,7 +21,7 @@ class CVATHTTPDownloaderV1(BaseDownloader):
         __url_cvat = settings.CVAT_HOST
         __username_cvat = settings.CVAT_USERNAME
         __password_cvat = settings.CVAT_PASSWORD
-        __output_dir_tmp = settings.TMP_DIR_CVAT
+        __output_dir_tmp = settings.CVAT_OUTPUT_DIR
         __format_data = settings.CVAT_FORMAT_DATA
 
         if not all([__url_cvat, __username_cvat, __password_cvat]):
@@ -208,7 +208,7 @@ class CVATHTTPDownloaderV2(BaseDownloader):
         __url_cvat = settings.CVAT_HOST
         __username_cvat = settings.CVAT_USERNAME
         __password_cvat = settings.CVAT_PASSWORD
-        __output_dir_tmp = settings.TMP_DIR_CVAT
+        __output_dir_tmp = settings.CVAT_OUTPUT_DIR
         __organization = settings.CVAT_ORGANIZATION
         __format_data = settings.CVAT_FORMAT_DATA
 
