@@ -18,7 +18,7 @@ from src.data.downloader.base_downloader import BaseDownloader
 
 class CVATHTTPDownloaderV1(BaseDownloader):
     def __init__(self):
-        __url_cvat = settings.CVAT_HOST.get_secret_value()
+        __url_cvat = settings.CVAT_HOST
         __username_cvat = settings.CVAT_USERNAME
         __password_cvat = settings.CVAT_PASSWORD.get_secret_value()
         __output_dir_tmp = settings.CVAT_OUTPUT_DIR
@@ -205,7 +205,7 @@ class CVATHTTPDownloaderV1(BaseDownloader):
 
 class CVATHTTPDownloaderV2(BaseDownloader):
     def __init__(self):
-        __url_cvat = settings.CVAT_HOST.get_secret_value()
+        __url_cvat = settings.CVAT_HOST
         __username_cvat = settings.CVAT_USERNAME
         __password_cvat = settings.CVAT_PASSWORD.get_secret_value()
         __output_dir_tmp = settings.CVAT_OUTPUT_DIR
@@ -386,7 +386,7 @@ class CVATHTTPDownloaderV2(BaseDownloader):
 
 class CVATSDKDownloader(BaseDownloader):
     def __init__(self):
-        __url_cvat = settings.CVAT_HOST.get_secret_value()
+        __url_cvat = settings.CVAT_HOST
         __username_cvat = settings.CVAT_USERNAME
         __password_cvat = settings.CVAT_PASSWORD.get_secret_value()
         __output_dir_tmp = settings.CVAT_OUTPUT_DIR

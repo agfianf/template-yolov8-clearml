@@ -2,13 +2,15 @@ import json
 import os
 import shutil
 
+from typing import Literal
+
 import yaml
 
 from clearml import Task
 from yaml.loader import SafeLoader
 
 
-def get_task_yolo_name(arg_model_name):
+def get_task_yolo_name(arg_model_name) -> Literal["segment", "detect", "classify"]:
     task_yolo = "None"
     arg_model_name = arg_model_name.replace(".pt", "")
     if "-seg" in arg_model_name:
@@ -48,3 +50,9 @@ def read_json(ann_path):
     with open(ann_path) as f:
         ann_d = json.load(f)
     return ann_d
+
+
+def get_label_enumeration_from_data_yaml(path_data_yaml: str):
+    datadotyaml = yaml_loader(path_data_yaml)
+    class_2_idx = {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
+    return class_2_idx

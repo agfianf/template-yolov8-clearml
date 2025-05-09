@@ -1,12 +1,18 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
+# https://docs.ultralytics.com/usage/callbacks/#all-callbacks
 
 import re
 
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 
+from rich import print
+from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.utils import LOGGER, TESTS_RUNNING
 from ultralytics.utils.torch_utils import model_info_for_loggers
+
+from src.utils.general import yaml_loader
+from src.utils.register_model import register_model_to_clearml
 
 
 try:
@@ -30,8 +36,7 @@ def _log_debug_samples(files, title="Debug Samples") -> None:
         title (str): A title that groups together images with the same values.
 
     """
-    task = Task.current_task()
-    if task:
+    if task := Task.current_task():
         for f in files:
             if f.exists():
                 it = re.search(r"_batch(\d+)", f.name)
@@ -58,6 +63,7 @@ def _log_plot(title, plot_path) -> None:
         [0, 0, 1, 1], frameon=False, aspect="auto", xticks=[], yticks=[]
     )  # no ticks
     ax.imshow(img)
+
     series = ""
     if "confusion_matrix" in title:
         series = title
@@ -71,15 +77,20 @@ def _log_plot(title, plot_path) -> None:
     if "labels" in title:
         series = title
         title = "Labels"
-    Task.current_task().get_logger().report_matplotlib_figure(
-        title=title, series=series, figure=fig, report_interactive=False
+
+    task: Task = Task.current_task()
+    task.get_logger().report_matplotlib_figure(
+        title=title,
+        series=series,
+        figure=fig,
+        report_interactive=False,
     )
 
 
-def on_pretrain_routine_start(trainer):
+def on_pretrain_routine_start(trainer: BaseTrainer):
     """Run at start of pretraining routine; initialize and connect/log task to ClearML."""
     try:
-        task = Task.current_task()
+        task: Task | None = Task.current_task()
         print("override on_pretrain_routine_start")
         if task:
             # Make sure the automatic pytorch and matplotlib bindings are disabled!
@@ -87,7 +98,7 @@ def on_pretrain_routine_start(trainer):
             PatchPyTorchModelIO.update_current_task(None)
             PatchedMatplotlib.update_current_task(None)
         else:
-            task = Task.init(
+            task: Task = Task.init(
                 project_name=trainer.args.project or "YOLOv8",
                 task_name=trainer.args.name,
                 tags=["YOLOv8"],
@@ -107,8 +118,8 @@ def on_pretrain_routine_start(trainer):
         )
 
 
-def on_train_epoch_end(trainer):
-    task = Task.current_task()
+def on_train_epoch_end(trainer: BaseTrainer):
+    task: Task = Task.current_task()
 
     if task:
         """Logs debug samples for the first epoch of YOLO training."""
@@ -127,10 +138,9 @@ def on_train_epoch_end(trainer):
                 task.get_logger().report_scalar("val/loss", k, v, iteration=trainer.epoch)
 
 
-def on_fit_epoch_end(trainer):
+def on_fit_epoch_end(trainer: BaseTrainer):
     """Report model information to logger at the end of an epoch."""
-    task = Task.current_task()
-    if task:
+    if task := Task.current_task():
         # You should have access to the validation bboxes under jdict
         task.get_logger().report_scalar(
             title="Epoch Time",
@@ -138,22 +148,30 @@ def on_fit_epoch_end(trainer):
             value=trainer.epoch_time,
             iteration=trainer.epoch,
         )
+
         if trainer.epoch == 0:
             for k, v in model_info_for_loggers(trainer).items():
                 task.get_logger().report_single_value(k, v)
 
 
-def on_val_end(validator):
+def on_val_end(validator: BaseTrainer):
     """Log validation results including labels and predictions."""
     if Task.current_task():
         # Log val_labels and val_pred
         _log_debug_samples(sorted(validator.save_dir.glob("val*.jpg")), "Validation")
 
 
-def on_train_end(trainer):
-    """Log final model and its name on training completion."""
-    task = Task.current_task()
-    if task:
+def on_train_end(trainer: BaseTrainer):
+    """Log final model and its name on training completion.
+
+    Parameters
+    ----------
+    trainer : BaseTrainer
+        The YOLO trainer instance with training information.
+
+    """
+    task: Task = Task.current_task()
+    if task := Task.current_task():
         _log_debug_samples(
             sorted(trainer.validator.save_dir.glob("val*.jpg")), "Validation"
         )
@@ -184,26 +202,38 @@ def on_train_end(trainer):
 
         for f in files:
             _log_plot(title=f.stem, plot_path=f)
+
         # Report final metrics
         for k, v in trainer.validator.metrics.results_dict.items():
             task.get_logger().report_single_value(k, v)
-        # Log the final model
-        task.update_output_model(
-            name="pytorch-best",
-            model_path=str(trainer.best),
-            model_name="pytorch-best",
-            auto_delete_file=False,
+
+        # Log the final models
+        # trainer.args.task  # segment, detect, classify
+        # trainer.args.imgsz  # 640
+        # trainer.args.model  # yolo11n-seg.pt
+        data_yaml = yaml_loader(trainer.args.data)
+        config_data = {
+            "model_name": trainer.args.model.replace(".pt", ""),
+            "imgsz": trainer.args.imgsz,
+            "task_yolo": trainer.args.task,
+            "format_model": "PyTorch",
+            "data_yaml": data_yaml,
+        }
+        print("config_data", config_data)
+
+        register_model_to_clearml(
+            path_model=trainer.best,
+            suffix="best",
+            **config_data,
         )
-        print(f"{str(trainer.best)}")
-        # print(f"{str(trainer.last)}")  # noqa: ERA001
-        task.update_output_model(
-            name="pytorch-last",
-            model_path=str(trainer.last),
-            model_name="pytorch-last",
-            auto_delete_file=False,
+        register_model_to_clearml(
+            path_model=trainer.last,
+            **config_data,
+            suffix="last",
         )
 
 
+# Define available callbacks based on ClearML availability
 callbacks = (
     {
         "on_pretrain_routine_start": on_pretrain_routine_start,

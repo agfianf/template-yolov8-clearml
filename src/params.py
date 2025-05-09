@@ -21,7 +21,7 @@ args_export = {
     "format": {
         "torchscript": 1,  # TorchScript
         "onnx": 1,  # ONNX
-        "openvino": 0,  # OpenVINO
+        "openvino": 1,  # OpenVINO
         "engine": 0,  # TensorRT
         "coreml": 0,  # CoreML
         "saved_model": 0,  # TensorFlow SavedModel
@@ -41,6 +41,7 @@ args_export = {
         "opset": None,
         "workspace": 4,
         "nms": False,
+        "fraction": 1.0,
     },
 }
 
@@ -50,14 +51,14 @@ args_logging = {
 }
 
 args_task = {
-    "model_name": "yolov11n",
+    "model_name": "yolo11n-seg",
     "model_latest_id": "",
     # "pretrained": "(model_id)"
 }
 
 args_data = {
     "cvat": {
-        "task_ids_train": [48],
+        "task_ids_train": [967, 745, 71, 4],
         "task_ids_test": [],
     },
     "label_studio": {
@@ -79,9 +80,9 @@ args_data = {
 
 args_train = {
     "augment": True,
-    "epochs": 1000,  # number of epochs to train for
+    "epochs": 3,  # number of epochs to train for
     "patience": 0,  # epochs to wait for no observable improvement for early stopping of training # noqa: E501
-    "batch": 2,  # number of images per batch (-1 for AutoBatch)
+    "batch": 32,  # number of images per batch (-1 for AutoBatch)
     "imgsz": 640,  # size of input images as integer or w,h
     "save": True,  # save train checkpoints and predict results
     "save_period": -1,  # Save checkpoint every x epochs (disabled if < 1)
@@ -125,7 +126,7 @@ args_train = {
 }
 
 args_val = {
-    "batch": 1,  # number of images per batch (-1 for AutoBatch)
+    "batch": -1,  # number of images per batch (-1 for AutoBatch)
     "save_json": False,  # save results to JSON file
     "save_hybrid": False,  # save hybrid version of labels (labels + additional predictions)  # noqa: E501
     "conf": 0.35,  # object confidence threshold for detection
@@ -136,5 +137,6 @@ args_val = {
     "dnn": False,  # use OpenCV DNN for ONNX inference
     "plots": True,  # show plots during training
     "rect": False,  # rectangular val with each batch collated for minimum padding
+    "save_crop": True,  # save cropped images
     "split": "val",  # dataset split to use for validation, i.e. 'val', 'test' or 'train'
 }
