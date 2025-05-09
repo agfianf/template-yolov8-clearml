@@ -12,8 +12,16 @@ run-docker:
 	-u $(id -u):$(id -g) \
 	-e PYTHONPATH=/workspace \
 	-w /workspace \
-	-v ${PWD}/ikan.clearml.conf:/root/clearml.conf \
+	-v ${PWD}/clearml.conf:/root/clearml.conf \
 	$(IMAGE_NAME) \
+	bash
+
+run-docker-v2:
+	docker run \
+	--ipc=host \
+	-it --rm --gpus all \
+	-v ${PWD}/clearml.conf:/root/clearml.conf \
+	$(IMAGE_NAME_v2) \
 	bash
 
 build:
@@ -33,6 +41,6 @@ get-req:
 	--format requirements.txt \
 	--resolution lowest-direct \
 	--no-hashes \
-	-o requirements-task.txt
+	-o requirements.txt
 
 
