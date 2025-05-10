@@ -15,7 +15,7 @@ from src.params import (
 
 
 def init_clearml() -> Task:
-    curr_task = Task.current_task()
+    curr_task: Task = Task.current_task()
     print("init clearml, Task.current_task=", curr_task)
 
     if curr_task is None:
@@ -48,7 +48,7 @@ def init_clearml() -> Task:
         ],
     )
 
-    tags = ["🏷️ v2.7", "DEBUG"]
+    tags = ["🏷️ v2.7"]
     curr_task.set_tags(tags)
 
     return Task.current_task()
