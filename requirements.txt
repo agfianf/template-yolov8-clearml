@@ -23,9 +23,9 @@ attrs==23.2.0
     #   cvat-sdk
     #   jsonschema
     #   referencing
-boto3==1.38.12
+boto3==1.38.13
     # via clearml
-botocore==1.38.12
+botocore==1.38.13
     # via
     #   boto3
     #   s3transfer
@@ -161,8 +161,10 @@ numpy==1.26.4
     #   contourpy
     #   label-studio-sdk
     #   matplotlib
+    #   onnx
     #   opencv-python
     #   opencv-python-headless
+    #   openvino
     #   pandas
     #   roboflow
     #   scipy
@@ -207,6 +209,8 @@ nvidia-nvjitlink-cu12==12.6.85 ; platform_machine == 'x86_64' and sys_platform =
     #   torch
 nvidia-nvtx-cu12==12.6.77 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via torch
+onnx==1.17.0
+    # via template-yolov8
 opencv-python==4.11.0.86
     # via ultralytics
 opencv-python-headless==4.10.0.84
@@ -215,12 +219,17 @@ opencv-python-headless==4.10.0.84
     #   albumentations
     #   roboflow
     #   template-yolov8
+openvino==2025.1.0
+    # via template-yolov8
+openvino-telemetry==2025.1.0
+    # via openvino
 orderedmultidict==1.0.1
     # via furl
 packaging==25.0
     # via
     #   cvat-sdk
     #   matplotlib
+    #   openvino
     #   plotly
 pandas==2.2.3
     # via
@@ -253,6 +262,8 @@ platformdirs==4.3.8
 plotly==6.0.1
     # via template-yolov8
 pre-commit==4.2.0
+protobuf==6.30.2
+    # via onnx
 psutil==5.9.8
     # via
     #   clearml
@@ -353,7 +364,7 @@ scipy==1.15.3
     #   ultralytics
 seaborn==0.13.2
     # via ultralytics
-setuptools==80.3.1
+setuptools==80.4.0
     # via
     #   clearml-agent
     #   cvat-sdk
@@ -418,7 +429,7 @@ ujson==5.10.0
     # via
     #   label-studio-converter
     #   label-studio-sdk
-ultralytics==8.3.128
+ultralytics==8.3.130
     # via template-yolov8
 ultralytics-thop==2.0.14
     # via ultralytics
