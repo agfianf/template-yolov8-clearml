@@ -27,7 +27,5 @@ settings = Settings()
 settings.CVAT_HOST = settings.CVAT_HOST.replace("\\x3a", ":")
 
 TMP_DIR_CVAT = "./tmp-cvat"
-print("load env")
-print(settings.CVAT_HOST)
-print(settings.CVAT_USERNAME)
-print(settings.CVAT_PASSWORD)
+print("Environment variables loaded successfully.")
+print("CVAT_HOST:", settings.CVAT_HOST)
