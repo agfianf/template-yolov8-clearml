@@ -1,8 +1,23 @@
-datasets-yolo/*
-test/*
-tmp/*
-*.pt
-tmp*
-testing-debug-ds/*
-tests/
+# Exclude entire directories
 Debug/
+dataset-yolov8/
+tmp-cvat/
+tests/
+tmp/
+.venv/
+runs/
+YOLO11/
+
+# Exclude .pt files recursively
+**/*.pt
+
+# Exclude other unnecessary files
+clearml.conf
+example.agent.conf
+*.log
+*.pyc
+__pycache__/
+*.zip
+*.tar.gz
+*.env
+Makefile

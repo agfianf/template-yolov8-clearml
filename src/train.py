@@ -1,96 +1,241 @@
-import ultralytics
-from ultralytics import YOLO, settings
-settings['clearml'] = False
-
-from clearml import Task
-from utils.clearml_utils import init_clearml
-task = init_clearml()
-
-import env
+import glob
 import os
+import random
 
+import numpy as np
+import torch
+import ultralytics
+
+from clearml import InputModel, Task  # noqa: F401
 from rich import print
+from ultralytics import YOLO
+
+from src.config import settings  # noqa: F401
 from src.data.setup import cleanup_cache
-from src.yolov8.exporter import export_handler
-from src.utils.general import get_task_yolo_name, yaml_loader, model_name_handler
+from src.initizalization import init_ultralytics_settings
+from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
 from src.yolov8.callbacks import callbacks
 from src.yolov8.data import DataHandler
-from src.utils.clearml_utils import init_clearml, config_clearml
+from src.yolov8.exporter import export_handler
+from utils.clearml_settings import config_clearml, init_clearml
 
 
-args_task, args_data, args_augment, args_train, args_val, args_export = config_clearml()
-print("ultralytics: version", ultralytics.__version__)
-Task.current_task().add_tags(f"yv8-{ultralytics.__version__}")
-Task.current_task().execute_remotely()
-
-task_yolo = get_task_yolo_name(args_task["model_name"])
-if not args_train["resume"]:
-    model_name = model_name_handler(args_task["model_name"])
-else:
-    Task.current_task().add_tags("resume")
-    model_name = args_task["model_name"]
-print("TASK_YOLO", task_yolo)
-
-# Download Data
-print("\n[Downloading Data]")
-handler = DataHandler(args_data=args_data, task_model=task_yolo)
-dataset_folder = handler.export(task_model=task_yolo)
-
-data_yaml_file = os.path.join(dataset_folder, "data.yaml")
-if task_yolo == "classify":
-    data_yaml_file = dataset_folder
-if task_yolo == "segment":
-    args_train["augment"] = False
-datadotyaml = yaml_loader(data_yaml_file)
-
-# Tagging
-Task.current_task().add_tags(task_yolo)
-Task.current_task().add_tags(os.path.basename(model_name).replace('.pt', ''))
-Task.current_task().add_tags(handler.source_type.upper())
+def _tagging_handler(task: Task, task_yolo: str, model_name: str, handler: DataHandler):
+    task.add_tags(f"ul-{ultralytics.__version__}")
+    task.add_tags(task_yolo)
+    task.add_tags(os.path.basename(model_name).replace(".pt", ""))
+    task.add_tags(handler.source_type.upper())
 
 
-# Utils
-Task.current_task().set_model_label_enumeration(
-    {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
-)
-print("datadotyaml", datadotyaml)
-
-print("\n[Training]")
-print("LOAD MODEL", model_name)
-model_yolo = YOLO(model=model_name)
+def _generate_data_yaml(args_train: dict, task_yolo: str, dataset_folder: str) -> str:
+    data_yaml_file = os.path.join(dataset_folder, "data.yaml")
+    if task_yolo == "classify":
+        data_yaml_file = dataset_folder
+    if task_yolo == "segment":
+        args_train["augment"] = False
+    return data_yaml_file
 
 
-print("Override Callbacks")
-for event, func in callbacks.items():
-    model_yolo.clear_callback(event)
-    model_yolo.add_callback(event, func)
+def _set_task_name_on_experiment(args_task: dict, args_train: dict) -> tuple[str, str]:
+    task_yolo = get_task_yolo_name(args_task["model_name"])
+    if not args_train["resume"]:
+        model_name = model_name_handler(args_task["model_name"])
+    else:
+        Task.current_task().add_tags("resume")
+        model_name = args_task["model_name"]
+    print("TASK_YOLO", task_yolo)
+    return task_yolo, model_name
 
-args_val["imgsz"] = args_train["imgsz"]
-if args_train["resume"]:
-    print("RESUME TRAINING")
-    model_yolo.resume = True
-    model_yolo.train(
-        data=data_yaml_file, 
-        epochs=args_train["epochs"], 
-        batch=args_train["batch"],
-        patience=args_train["patience"]
+
+def _predicting_result(
+    args_val: dict,
+    dataset_folder: str,
+    datadotyaml: dict,
+    model_yolo: YOLO,
+    args_predict: dict,
+) -> None:
+    print("args_predict", args_predict)
+    path_test = (
+        datadotyaml.get("val")
+        if datadotyaml.get("test") is None
+        else datadotyaml.get("test")
     )
-else:
-    model_yolo.train(data=data_yaml_file, **args_train)
+    dir_valid_images = os.path.join(dataset_folder, path_test)
 
-cleanup_cache(dataset_folder)
-if datadotyaml.get('test'):
-    args_val["split"] = "test"
-try:
-    model_yolo.val(data=data_yaml_file, **args_val)
-except Exception as e:
-    print("Error Validation", e)
+    # Extract and randomize list of image file paths
+    # Collect all image files (add more extensions if needed)
+    image_extensions = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif", "*.tiff")
+    image_paths = []
+    for ext in image_extensions:
+        image_paths.extend(
+            glob.glob(os.path.join(dir_valid_images, "**", ext), recursive=True)
+        )
 
-export_handler(
-    yolo=model_yolo,
-    task_yolo=task_yolo, 
-    dataset_folder=dataset_folder,
-    args_export=args_export,
-    args_training=args_train,
-    args_task=args_task
-)
+    random.shuffle(image_paths)
+    # Now image_paths is a randomized list of full image paths
+    # If you want to enumerate:
+    max_images = args_predict.get("max_images", 40)
+    image_paths = image_paths[:max_images]
+    print("image_paths", image_paths[0:5], os.path.exists(image_paths[0]))
+
+    model_yolo.model.eval()  # switch ke eval mode
+    # with torch.no_grad():
+    result = model_yolo.predict(
+        source=image_paths,
+        imgsz=args_val["imgsz"],
+        device="0" if torch.cuda.is_available() else "cpu",
+        **args_predict.get("model"),
+    )
+
+    task: Task = Task.current_task()
+    images_group = []
+    for i, r in enumerate(result):
+        im_bgr = r.plot(
+            **args_predict.get("plot"),
+        )  # BGR-order numpy array
+        im_rgb = im_bgr[..., ::-1]  # RGB-order RGB numpy array
+        images_group.append(im_rgb)
+
+        # When we have 4 images or at the end, create a grid and report
+        if len(images_group) == 4 or (i == len(image_paths) - 1 and images_group):
+            # Determine max height and width for padding
+            max_h = max(img.shape[0] for img in images_group)
+            max_w = max(img.shape[1] for img in images_group)
+            # Pad images to same size
+            padded_imgs = []
+            for img in images_group:
+                h, w = img.shape[:2]
+                pad_h = max_h - h
+                pad_w = max_w - w
+                padded = np.pad(
+                    img,
+                    ((0, pad_h), (0, pad_w), (0, 0)),
+                    mode="constant",
+                    constant_values=0,
+                )
+                padded_imgs.append(padded)
+            # Fill up to 4 images with black if needed
+            while len(padded_imgs) < 4:
+                padded_imgs.append(np.zeros((max_h, max_w, 3), dtype=np.uint8))
+            # Arrange in 2x2 grid
+            top = np.concatenate(padded_imgs[:2], axis=1)
+            bottom = np.concatenate(padded_imgs[2:], axis=1)
+            grid = np.concatenate([top, bottom], axis=0)
+            task.get_logger().report_image(
+                title="Prediction",
+                series=f"image-{i}",
+                iteration=1,
+                image=grid,
+            )
+            images_group = []
+
+
+def main():
+    print("ultralytics: version", ultralytics.__version__)
+    # initialialization
+    init_ultralytics_settings()
+    task: Task = init_clearml()
+
+    # configuration params
+    (
+        args_task,
+        args_data,
+        args_augment,
+        args_train,
+        args_val,
+        args_export,
+        args_predict,
+    ) = config_clearml()
+
+    task.execute_remotely()
+
+    # Set Task Name
+    task_yolo, model_name = _set_task_name_on_experiment(args_task, args_train)
+
+    # Download Data
+    print("\n[Downloading Data]")
+    handler = DataHandler(args_data=args_data, task_model=task_yolo)
+    dataset_folder = handler.export()
+
+    data_yaml_file = _generate_data_yaml(args_train, task_yolo, dataset_folder)
+
+    # Tagging
+    _tagging_handler(task, task_yolo, model_name, handler)
+
+    # Utils
+    datadotyaml = yaml_loader(data_yaml_file)
+    class_2_idx = {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
+    task.set_model_label_enumeration(class_2_idx)
+    print("datadotyaml", datadotyaml, "class_2_idx", class_2_idx)
+
+    print("\n[Training]")
+    print("LOAD MODEL", model_name, task_yolo)
+
+    # if args_train["resume"] or (args_task["model_latest_id"] != ""):
+    #     print("Resume training from", args_task["model_latest_id"])  # noqa: ERA001
+    #     model_id = args_task["model_latest_id"] # noqa: ERA001
+    #     model_input = InputModel(model_id=model_id) # noqa: ERA001
+    #     path_model = model_input.get_weights() # noqa: ERA001
+    #     model_name = model_input.config_dict["net"] # noqa: ERA001
+    #     task_yolo = model_input.config_dict["task"] # noqa: ERA001
+    #     args_train["imgsz"] = model_input.config_dict["imgsz"] # noqa: ERA001
+    #     model_yolo = YOLO(model=model_name, task=task_yolo, verbose=True) # noqa: ERA001
+    #     model_yolo.load(path_model) # noqa: ERA001
+    # else: # noqa: ERA001
+    print(args_task["model_latest_id"], type(args_task["model_latest_id"]))
+    model_yolo = YOLO(model=model_name, task=task_yolo, verbose=True)
+
+    print("Override Callbacks")
+    for event, func in callbacks.items():
+        model_yolo.clear_callback(event)
+        model_yolo.add_callback(event, func)
+
+    args_val["imgsz"] = args_train["imgsz"]
+
+    model_yolo.train(
+        data=data_yaml_file,
+        **args_train,
+    )
+
+    cleanup_cache(dataset_folder)
+
+    if datadotyaml.get("test"):
+        args_val["split"] = "test"
+
+    try:
+        args_val["batch"] = 32
+        model_yolo.val(data=data_yaml_file, **args_val)
+    except Exception as e:
+        print("Error Validation", e)
+
+    # Export ============================
+    print("\n[Exporting Model]")
+
+    export_handler(
+        yolo=model_yolo,
+        task_yolo=task_yolo,
+        dataset_folder=dataset_folder,
+        args_export=args_export,
+        args_training=args_train,
+        args_task=args_task,
+    )
+
+    # Predict ============================
+    print("\n[Predicting]")
+
+    try:
+        model_yolo = YOLO(model_yolo.trainer.best)
+        _predicting_result(
+            args_val, dataset_folder, datadotyaml, model_yolo, args_predict
+        )
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        print("Error Predicting", e)
+
+    print("Done Experiment")
+
+
+if __name__ == "__main__":
+    main()
