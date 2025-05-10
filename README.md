@@ -1,8 +1,12 @@
 # Ultralytics YOLOv8 + ClearML Template
 
+![overview clearml](./assets/arch.png)
+
 A robust, reproducible template for training Ultralytics YOLOv8/YOLO11 models with full [ClearML](https://clear.ml/) integration. This project enables experiment tracking, dataset management, model registration, and remote execution, supporting multiple data sources and advanced data filtering.
 
 ## Features
+
+![overview clearml](./assets/overview.gif)
 
 - **Ultralytics YOLOv8**: Train, validate, export, and predict with the latest YOLO models.
 - **ClearML Integration**:
