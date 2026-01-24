@@ -24,6 +24,6 @@ RUN --mount=type=bind,source=uv.lock,target=uv.lock \
 COPY ./src /workspace/src
 
 # Create nonroot user and set permissions
-# RUN groupadd -r nonroot && useradd -r -g nonroot nonroot
-# RUN chown -R nonroot:nonroot /workspace
-# USER nonroot
+RUN groupadd -r nonroot && useradd -r -g nonroot nonroot
+RUN chown -R nonroot:nonroot /workspace
+USER nonroot

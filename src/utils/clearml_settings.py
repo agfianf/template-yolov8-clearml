@@ -89,7 +89,6 @@ def config_clearml():
     args_data.update({"class_exclude": ls_exclude})
     args_data.update({"attributes_exclude": args_data.get("attributes_exclude", {})})
     args_data.update({"area_segment_min": args_data.get("area_segment_min", None)})
-    args_predict.update(args_predict)
 
     return (
         args_task,

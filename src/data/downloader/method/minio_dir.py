@@ -1,21 +1,24 @@
 import os
-from concurrent.futures import ThreadPoolExecutor
 import time
+
+from concurrent.futures import ThreadPoolExecutor
+
 from minio import Minio
 
 
 class MinioDatasetDownloader:
     def __init__(self):
-        __ENDPOINT = os.getenv("MINIO_ENDPOINT")
-        __ACCESS_KEY = os.getenv("ACCESS_KEY")
-        __SECRET_KEY = os.getenv("SECRET_KEY")
-        __BUCKET_NAME_DATA = os.getenv("BUCKET_NAME_DATA")
+        self.__endpoint = os.getenv("MINIO_ENDPOINT")
+        self.__access_key = os.getenv("MINIO_ACCESS_KEY")
+        self.__secret_key = os.getenv("MINIO_SECRET_KEY")
+        self.bucket_name = os.getenv("MINIO_BUCKET_NAME", "app-data-workflow")
+        self.region = os.getenv("MINIO_REGION", "xxxx-server-2")
 
-        self.__endpoint = "10.8.0.66:9000"
-        self.__access_key = "bs_server_1"
-        self.__secret_key = "zNAYleEDeCnlzaXJsd7MvXnQhPmZehIA"
-        self.bucket_name = "app-data-workflow"
-        self.region = "xxxx-server-2"
+        if not all([self.__endpoint, self.__access_key, self.__secret_key]):
+            raise ValueError(
+                "Missing required MinIO environment variables: "
+                "MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY"
+            )
 
         # Create a Minio client with the given credentials
         self.minio_client = Minio(
@@ -26,27 +29,31 @@ class MinioDatasetDownloader:
             region=self.region,
         )
 
-    def download_dataset(self, dataset_dict:dict, output_dir:str, max_workers:int=10) -> str:
-        """
-        params::
+    def download_dataset(
+        self, dataset_dict: dict, output_dir: str, max_workers: int = 10
+    ) -> str:
+        """params::
             - dataset_dict: {'class_name': ['url1', 'url2', ...], ...}
             - output_dir: path to save dataset
 
-        return: 
+        Return:
             - list class name
+
         """
         # Create the download directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
 
         ls_class = set()
         # Iterate over the classes in the dataset
-        print('\t⚡ Downloading dataset')
+        print("\t⚡ Downloading dataset")
         time_start = time.time()
         for class_name, urls in dataset_dict.items():
             # Create the class directory if it doesn't exist
             # 🚨 lowercase class_name
             class_name = class_name.lower()
-            class_dir = os.path.join(output_dir, class_name)  # need_check_capital_class_name
+            class_dir = os.path.join(
+                output_dir, class_name
+            )  # need_check_capital_class_name
             os.makedirs(class_dir, exist_ok=True)
             ls_class.add(class_name.capitalize())  # need_check_capital_class_name
 
@@ -68,7 +75,7 @@ class MinioDatasetDownloader:
                         destination_path,
                     )
         duration = round(time.time() - time_start, 2)
-        print(f'\t✅ Completed download dataset in {duration} secs!')
+        print(f"\t✅ Completed download dataset in {duration} secs!")
         return ls_class
 
 

@@ -13,11 +13,11 @@ from ultralytics import YOLO
 from src.config import settings  # noqa: F401
 from src.data.setup import cleanup_cache
 from src.initizalization import init_ultralytics_settings
+from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
 from src.yolov8.callbacks import callbacks
 from src.yolov8.data import DataHandler
 from src.yolov8.exporter import export_handler
-from utils.clearml_settings import config_clearml, init_clearml
 
 
 def _tagging_handler(task: Task, task_yolo: str, model_name: str, handler: DataHandler):
@@ -76,6 +76,11 @@ def _predicting_result(
     # If you want to enumerate:
     max_images = args_predict.get("max_images", 40)
     image_paths = image_paths[:max_images]
+
+    if not image_paths:
+        print("WARNING: No validation images found")
+        return
+
     print("image_paths", image_paths[0:5], os.path.exists(image_paths[0]))
 
     model_yolo.model.eval()  # switch ke eval mode

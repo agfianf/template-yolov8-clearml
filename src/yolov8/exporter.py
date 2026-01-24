@@ -32,7 +32,10 @@ FORMAT_PARAMETERS = {
 
 def load_data_yaml(dataset_folder: str) -> dict:
     """Load the data YAML file from the dataset folder."""
-    with open(os.path.join(dataset_folder, "data.yaml")) as f:
+    yaml_path = os.path.join(dataset_folder, "data.yaml")
+    if not os.path.exists(yaml_path):
+        raise FileNotFoundError(f"data.yaml not found in {dataset_folder}")
+    with open(yaml_path) as f:
         return yaml.load(f, Loader=SafeLoader)
 
 
