@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # fmt: off
@@ -103,22 +103,22 @@ class DataParams(BaseModel):
 
 class TrainParams(BaseModel):
     augment: bool = Field(True, description="Enable augmentation")
-    epochs: int = Field(1000, description="Number of epochs to train for")
-    patience: int = Field(0, description="Early stopping patience")
-    batch: int = Field(2, description="Batch size")
-    imgsz: int = Field(640, description="Input image size")
+    epochs: int = Field(1000, ge=1, le=10000, description="Number of epochs to train for")
+    patience: int = Field(0, ge=0, description="Early stopping patience")
+    batch: int = Field(2, ge=1, description="Batch size")
+    imgsz: int = Field(640, ge=32, description="Input image size")
     save: bool = Field(True, description="Save checkpoints and results")
     save_period: int = Field(-1, description="Checkpoint save period")
     cache: bool = Field(True, description="Cache data loading")
     device: Any | None = Field(None, description="Device to run on")
-    workers: int = Field(8, description="Number of worker threads")
+    workers: int = Field(8, ge=0, description="Number of worker threads")
     project: str | None = Field(None, description="Project name")
     name: str | None = Field(None, description="Experiment name")
     exist_ok: bool = Field(True, description="Overwrite existing experiment")
     pretrained: bool = Field(True, description="Use pretrained model")
     optimizer: str = Field("auto", description="Optimizer type")
     verbose: bool = Field(True, description="Verbose output")
-    seed: int = Field(0, description="Random seed")
+    seed: int = Field(0, ge=0, description="Random seed")
     deterministic: bool = Field(True, description="Deterministic mode")
     single_cls: bool = Field(False, description="Single-class training")
     rect: bool = Field(False, description="Rectangular training")
@@ -128,26 +128,34 @@ class TrainParams(BaseModel):
     )
     resume: bool = Field(False, description="Resume from last checkpoint")
     amp: bool = Field(True, description="Automatic Mixed Precision (AMP) training")
-    fraction: float = Field(0.9, description="Dataset fraction to train on")
+    fraction: float = Field(0.9, gt=0, le=1, description="Dataset fraction to train on")
     profile: bool = Field(False, description="Profile ONNX/TensorRT speeds")
-    lr0: float = Field(0.001, description="Initial learning rate")
-    lrf: float = Field(0.0001, description="Final learning rate factor")
-    momentum: float = Field(0.937, description="SGD momentum/Adam beta1")
-    weight_decay: float = Field(0.0005, description="Optimizer weight decay")
-    warmup_epochs: float = Field(3.0, description="Warmup epochs")
-    warmup_momentum: float = Field(0.8, description="Warmup initial momentum")
-    warmup_bias_lr: float = Field(0.1, description="Warmup initial bias lr")
-    box: float = Field(7.5, description="Box loss gain")
-    cls: float = Field(0.5, description="Class loss gain")
-    dfl: float = Field(1.5, description="DFL loss gain")
-    pose: float = Field(12.0, description="Pose loss gain")
-    kobj: float = Field(2.0, description="Keypoint obj loss gain")
-    label_smoothing: float = Field(0.0, description="Label smoothing")
-    nbs: int = Field(64, description="Nominal batch size")
+    lr0: float = Field(0.001, gt=0, description="Initial learning rate")
+    lrf: float = Field(0.0001, gt=0, description="Final learning rate factor")
+    momentum: float = Field(0.937, ge=0, le=1, description="SGD momentum/Adam beta1")
+    weight_decay: float = Field(0.0005, ge=0, description="Optimizer weight decay")
+    warmup_epochs: float = Field(3.0, ge=0, description="Warmup epochs")
+    warmup_momentum: float = Field(0.8, ge=0, le=1, description="Warmup initial momentum")
+    warmup_bias_lr: float = Field(0.1, ge=0, description="Warmup initial bias lr")
+    box: float = Field(7.5, gt=0, description="Box loss gain")
+    cls: float = Field(0.5, gt=0, description="Class loss gain")
+    dfl: float = Field(1.5, gt=0, description="DFL loss gain")
+    pose: float = Field(12.0, gt=0, description="Pose loss gain")
+    kobj: float = Field(2.0, gt=0, description="Keypoint obj loss gain")
+    label_smoothing: float = Field(0.0, ge=0, le=1, description="Label smoothing")
+    nbs: int = Field(64, ge=1, description="Nominal batch size")
     overlap_mask: bool = Field(True, description="Masks should overlap during training")
-    mask_ratio: int = Field(4, description="Mask downsample ratio")
-    dropout: float = Field(0.0, description="Dropout regularization")
+    mask_ratio: int = Field(4, ge=1, description="Mask downsample ratio")
+    dropout: float = Field(0.0, ge=0, le=1, description="Dropout regularization")
     val: bool = Field(True, description="Validate/test during training")
+
+    @field_validator("imgsz")
+    @classmethod
+    def validate_imgsz(cls, v: int) -> int:
+        """Validate that image size is a multiple of 32."""
+        if v % 32 != 0:
+            raise ValueError("imgsz must be a multiple of 32")
+        return v
 
 
 class ValParams(BaseModel):

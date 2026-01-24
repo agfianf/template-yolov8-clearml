@@ -1,5 +1,6 @@
 import signal
 
+
 class TimeoutError(Exception):
     def __init__(self, message="Function execution timed out"):
         self.message = message

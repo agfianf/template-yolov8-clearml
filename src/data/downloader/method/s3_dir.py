@@ -1,14 +1,19 @@
-import boto3
 import os
-from clearml import config as config_clearml
-from data.utils import mkdir_p
 import threading
 import time
-import boto3.session
+
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import boto3
+import boto3.session
 import splitfolders
+
+from clearml import config as config_clearml
+
+from data.utils import mkdir_p
+
 
 def download_object(s3_client, url_s3, save_dir):
     parts = url_s3.split("/")
@@ -49,7 +54,7 @@ class HandlerS3:
         self.aws_secret_access_key = config_clearml.get_config_for_bucket('').secret
         self.output_dir = output_dir
         self.tmp_dir = 'tmp-classification'
-    
+
     def download_object(self, s3_client, url_s3):
         bucket_name = url_s3.replace('s3://', '').split('/')[0]
         prefix = url_s3.replace(f's3://{bucket_name}/', '')
@@ -72,8 +77,8 @@ class HandlerS3:
         # Create a session and use it to make our client
         session = boto3.session.Session()
         s3_client = session.client(
-            "s3", 
-            aws_access_key_id=self.aws_access_key_id, 
+            "s3",
+            aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key
         )
 
@@ -91,13 +96,13 @@ class HandlerS3:
                     yield key, future.result()
                 else:
                     yield key, exception
-    
+
     def extract_list(self, dir_s3_path:str):
         bucket_name = dir_s3_path.replace('s3://', '').split('/')[0]
         prefix = dir_s3_path.replace(f's3://{bucket_name}/', '')
         print(bucket_name, prefix)
-        s3_client = boto3.client('s3', 
-                            aws_access_key_id=self.aws_access_key_id, 
+        s3_client = boto3.client('s3',
+                            aws_access_key_id=self.aws_access_key_id,
                             aws_secret_access_key=self.aws_secret_access_key
                         )
 
@@ -115,13 +120,13 @@ class HandlerS3:
             if result != True:
                 print('FAILED:', key, result)
         end_time = time.time() - start_time
-        
+
         # splitting
         splitfolders.ratio(
-            self.tmp_dir, 
+            self.tmp_dir,
             output=self.output_dir,
-            seed=1337, 
-            ratio=(.8, .2), 
+            seed=1337,
+            ratio=(.8, .2),
             move=True
         )
 

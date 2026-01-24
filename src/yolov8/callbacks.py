@@ -6,13 +6,16 @@ import re
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 
-from rich import print
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.utils import LOGGER, TESTS_RUNNING
 from ultralytics.utils.torch_utils import model_info_for_loggers
 
 from src.utils.general import yaml_loader
+from src.utils.logging import get_logger
 from src.utils.register_model import register_model_to_clearml
+
+
+logger = get_logger(__name__)
 
 
 try:
@@ -91,7 +94,7 @@ def on_pretrain_routine_start(trainer: BaseTrainer):
     """Run at start of pretraining routine; initialize and connect/log task to ClearML."""
     try:
         task: Task | None = Task.current_task()
-        print("override on_pretrain_routine_start")
+        logger.info("override on_pretrain_routine_start")
         if task:
             # Make sure the automatic pytorch and matplotlib bindings are disabled!
             # We are logging these plots and model files manually in the integration
@@ -237,7 +240,7 @@ def on_train_end(trainer: BaseTrainer):
             "format_model": "PyTorch",
             "data_yaml": data_yaml,
         }
-        print("config_data", config_data)
+        logger.info("config_data: %s", config_data)
 
         register_model_to_clearml(
             path_model=trainer.best,

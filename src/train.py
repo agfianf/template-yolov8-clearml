@@ -7,7 +7,6 @@ import torch
 import ultralytics
 
 from clearml import InputModel, Task  # noqa: F401
-from rich import print
 from ultralytics import YOLO
 
 from src.config import settings  # noqa: F401
@@ -15,9 +14,13 @@ from src.data.setup import cleanup_cache
 from src.initizalization import init_ultralytics_settings
 from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
+from src.utils.logging import get_logger
 from src.yolov8.callbacks import callbacks
 from src.yolov8.data import DataHandler
 from src.yolov8.exporter import export_handler
+
+
+logger = get_logger(__name__)
 
 
 def _tagging_handler(task: Task, task_yolo: str, model_name: str, handler: DataHandler):
@@ -43,7 +46,7 @@ def _set_task_name_on_experiment(args_task: dict, args_train: dict) -> tuple[str
     else:
         Task.current_task().add_tags("resume")
         model_name = args_task["model_name"]
-    print("TASK_YOLO", task_yolo)
+    logger.info("TASK_YOLO: %s", task_yolo)
     return task_yolo, model_name
 
 
@@ -54,7 +57,7 @@ def _predicting_result(
     model_yolo: YOLO,
     args_predict: dict,
 ) -> None:
-    print("args_predict", args_predict)
+    logger.debug("args_predict: %s", args_predict)
     path_test = (
         datadotyaml.get("val")
         if datadotyaml.get("test") is None
@@ -78,10 +81,12 @@ def _predicting_result(
     image_paths = image_paths[:max_images]
 
     if not image_paths:
-        print("WARNING: No validation images found")
+        logger.warning("No validation images found")
         return
 
-    print("image_paths", image_paths[0:5], os.path.exists(image_paths[0]))
+    logger.info(
+        "image_paths: %s, exists: %s", image_paths[0:5], os.path.exists(image_paths[0])
+    )
 
     model_yolo.model.eval()  # switch ke eval mode
     # with torch.no_grad():
@@ -136,7 +141,7 @@ def _predicting_result(
 
 
 def main():
-    print("ultralytics: version", ultralytics.__version__)
+    logger.info("ultralytics version: %s", ultralytics.__version__)
     # initialialization
     init_ultralytics_settings()
     task: Task = init_clearml()
@@ -158,7 +163,7 @@ def main():
     task_yolo, model_name = _set_task_name_on_experiment(args_task, args_train)
 
     # Download Data
-    print("\n[Downloading Data]")
+    logger.info("[Downloading Data]")
     handler = DataHandler(args_data=args_data, task_model=task_yolo)
     dataset_folder = handler.export()
 
@@ -171,10 +176,10 @@ def main():
     datadotyaml = yaml_loader(data_yaml_file)
     class_2_idx = {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
     task.set_model_label_enumeration(class_2_idx)
-    print("datadotyaml", datadotyaml, "class_2_idx", class_2_idx)
+    logger.info("datadotyaml: %s, class_2_idx: %s", datadotyaml, class_2_idx)
 
-    print("\n[Training]")
-    print("LOAD MODEL", model_name, task_yolo)
+    logger.info("[Training]")
+    logger.info("LOAD MODEL: %s, task: %s", model_name, task_yolo)
 
     # if args_train["resume"] or (args_task["model_latest_id"] != ""):
     #     print("Resume training from", args_task["model_latest_id"])  # noqa: ERA001
@@ -187,10 +192,14 @@ def main():
     #     model_yolo = YOLO(model=model_name, task=task_yolo, verbose=True) # noqa: ERA001
     #     model_yolo.load(path_model) # noqa: ERA001
     # else: # noqa: ERA001
-    print(args_task["model_latest_id"], type(args_task["model_latest_id"]))
+    logger.debug(
+        "model_latest_id: %s, type: %s",
+        args_task["model_latest_id"],
+        type(args_task["model_latest_id"]),
+    )
     model_yolo = YOLO(model=model_name, task=task_yolo, verbose=True)
 
-    print("Override Callbacks")
+    logger.info("Override Callbacks")
     for event, func in callbacks.items():
         model_yolo.clear_callback(event)
         model_yolo.add_callback(event, func)
@@ -211,10 +220,10 @@ def main():
         args_val["batch"] = 32
         model_yolo.val(data=data_yaml_file, **args_val)
     except Exception as e:
-        print("Error Validation", e)
+        logger.exception("Error during validation: %s", e)
 
     # Export ============================
-    print("\n[Exporting Model]")
+    logger.info("[Exporting Model]")
 
     export_handler(
         yolo=model_yolo,
@@ -226,7 +235,7 @@ def main():
     )
 
     # Predict ============================
-    print("\n[Predicting]")
+    logger.info("[Predicting]")
 
     try:
         model_yolo = YOLO(model_yolo.trainer.best)
@@ -234,12 +243,9 @@ def main():
             args_val, dataset_folder, datadotyaml, model_yolo, args_predict
         )
     except Exception as e:
-        import traceback
+        logger.exception("Error during prediction: %s", e)
 
-        traceback.print_exc()
-        print("Error Predicting", e)
-
-    print("Done Experiment")
+    logger.info("Done Experiment")
 
 
 if __name__ == "__main__":

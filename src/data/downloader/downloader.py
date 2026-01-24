@@ -1,9 +1,10 @@
-from data.downloader.cvat_downloader import CVATDownloader
+from enum import Enum
+
 from data.downloader.aws_s3_downloader import AWSS3Downloader
+from data.downloader.cvat_downloader import CVATDownloader
 from data.downloader.label_studio_downloader import LabelStudioDownloader
 from data.downloader.roboflow_downloader import RoboflowDownloader
 
-from enum import Enum
 
 class DownloaderType(Enum):
     CVAT = 'CVAT'
@@ -24,4 +25,4 @@ class DownloaderFactory:
         if source not in DownloaderFactory._downloaders:
             raise ValueError(f'Invalid source: {source}')
         return DownloaderFactory._downloaders[source](*params)
-    
+

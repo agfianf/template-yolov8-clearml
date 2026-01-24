@@ -12,11 +12,15 @@ from src.params import (
     args_train,
     args_val,
 )
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 def init_clearml() -> Task:
     curr_task: Task = Task.current_task()
-    print("init clearml, Task.current_task=", curr_task)
+    logger.info("init clearml, Task.current_task=%s", curr_task)
 
     if curr_task is None:
         curr_dir = os.getcwd()
@@ -77,12 +81,12 @@ def config_clearml():
     ls_exclude = exclude_data.replace(", ", ",").replace(" ,", ",").split(",")
 
     if args_task["model_latest_id"] != "":
-        print("Downloading latest model")
+        logger.info("Downloading latest model")
         latest_model = InputModel(model_id=args_task["model_latest_id"])
         path_latest_model = latest_model.get_weights()
         args_train["resume"] = True
         args_task["model_name"] = path_latest_model
-        print("▶️ Resume training from", latest_model)
+        logger.info("Resume training from %s", latest_model)
 
     args_train.update(args_logging)
     args_train.update(args_augment)
