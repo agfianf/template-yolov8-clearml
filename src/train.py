@@ -16,8 +16,10 @@ from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
 from src.utils.logging import get_logger
 from src.yolov8.callbacks import callbacks
+from src.yolov8.clearml_logger import YOLOClearMLLogger
 from src.yolov8.data import DataHandler
 from src.yolov8.exporter import export_handler
+from src.yolov8.metrics_utils import collect_prediction_confidences
 
 
 logger = get_logger(__name__)
@@ -56,6 +58,7 @@ def _predicting_result(
     datadotyaml: dict,
     model_yolo: YOLO,
     args_predict: dict,
+    args_visualization: dict | None = None,
 ) -> None:
     logger.debug("args_predict: %s", args_predict)
     path_test = (
@@ -88,6 +91,11 @@ def _predicting_result(
         "image_paths: %s, exists: %s", image_paths[0:5], os.path.exists(image_paths[0])
     )
 
+    # Get class names for confidence logging
+    class_names = datadotyaml.get("names", [])
+    if isinstance(class_names, dict):
+        class_names = list(class_names.values())
+
     model_yolo.model.eval()  # switch ke eval mode
     # with torch.no_grad():
     result = model_yolo.predict(
@@ -97,9 +105,14 @@ def _predicting_result(
         **args_predict.get("model"),
     )
 
+    # Collect results into a list for confidence extraction
+    result_list = list(result)
+
     task: Task = Task.current_task()
+    clearml_logger = YOLOClearMLLogger(task)
+
     images_group = []
-    for i, r in enumerate(result):
+    for i, r in enumerate(result_list):
         im_bgr = r.plot(
             **args_predict.get("plot"),
         )  # BGR-order numpy array
@@ -139,6 +152,33 @@ def _predicting_result(
             )
             images_group = []
 
+    # Log confidence histograms if enabled
+    if args_visualization is None:
+        args_visualization = {}
+    if args_visualization.get("log_confidence_histograms", True):
+        all_confidences, per_class_confidences = collect_prediction_confidences(
+            result_list, class_names
+        )
+
+        # Log overall confidence distribution
+        if all_confidences:
+            clearml_logger.log_confidence_histogram(
+                all_confidences,
+                iteration=1,
+                title="Distributions",
+                series="All Classes - Confidence",
+            )
+
+        # Log per-class confidence distributions
+        for cls_name, confidences in per_class_confidences.items():
+            if confidences:
+                clearml_logger.log_confidence_histogram(
+                    confidences,
+                    iteration=1,
+                    title="Distributions/Per-Class",
+                    series=f"{cls_name} - Confidence",
+                )
+
 
 def main():
     logger.info("ultralytics version: %s", ultralytics.__version__)
@@ -155,6 +195,7 @@ def main():
         args_val,
         args_export,
         args_predict,
+        args_visualization,
     ) = config_clearml()
 
     task.execute_remotely()
@@ -240,7 +281,12 @@ def main():
     try:
         model_yolo = YOLO(model_yolo.trainer.best)
         _predicting_result(
-            args_val, dataset_folder, datadotyaml, model_yolo, args_predict
+            args_val,
+            dataset_folder,
+            datadotyaml,
+            model_yolo,
+            args_predict,
+            args_visualization,
         )
     except Exception as e:
         logger.exception("Error during prediction: %s", e)

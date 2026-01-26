@@ -10,9 +10,19 @@ from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.utils import LOGGER, TESTS_RUNNING
 from ultralytics.utils.torch_utils import model_info_for_loggers
 
+from src.params import args_visualization
 from src.utils.general import yaml_loader
 from src.utils.logging import get_logger
 from src.utils.register_model import register_model_to_clearml
+from src.yolov8.clearml_logger import YOLOClearMLLogger
+from src.yolov8.metrics_utils import (
+    extract_confusion_matrix_data,
+    extract_learning_rate,
+    extract_loss_components,
+    extract_per_class_metrics,
+    extract_pr_curve_data,
+    extract_speed_metrics,
+)
 
 
 logger = get_logger(__name__)
@@ -125,54 +135,89 @@ def on_train_epoch_end(trainer: BaseTrainer):
     task: Task = Task.current_task()
 
     if task:
-        """Logs debug samples for the first epoch of YOLO training."""
+        clearml_logger = YOLOClearMLLogger(task)
+
+        # Log debug samples for the first epoch of YOLO training
         if trainer.epoch == 1:
             _log_debug_samples(
                 sorted(trainer.save_dir.glob("train_batch*.jpg")), "Mosaic"
             )
-        """Report the current training progress."""
-        # print("trainer", trainer.metrics)  # noqa: ERA001
-        # print("trainer.validator.metrics",trainer.validator.metrics.results_dict)  # noqa: E501, ERA001
+
+        # Report the current training progress
         for k, v in trainer.validator.metrics.results_dict.items():
             if k == "fitness":
-                task.get_logger().report_scalar("fitness", k, v, iteration=trainer.epoch)
+                task.get_logger().report_scalar(
+                    "Metrics/Summary", k, v, iteration=trainer.epoch
+                )
                 continue
             if "precision" in k:
                 task.get_logger().report_scalar(
-                    "precision",
+                    "Metrics/Precision",
                     k,
                     v,
                     iteration=trainer.epoch,
                 )
                 continue
             if "recall" in k:
-                task.get_logger().report_scalar("recall", k, v, iteration=trainer.epoch)
+                task.get_logger().report_scalar(
+                    "Metrics/Recall", k, v, iteration=trainer.epoch
+                )
                 continue
             if "mAP50" in k:
-                task.get_logger().report_scalar("mAP50", k, v, iteration=trainer.epoch)
+                task.get_logger().report_scalar(
+                    "Metrics/mAP", k, v, iteration=trainer.epoch
+                )
                 continue
 
-            task.get_logger().report_scalar("train", k, v, iteration=trainer.epoch)
+            task.get_logger().report_scalar(
+                "Metrics/Other", k, v, iteration=trainer.epoch
+            )
 
+        # Log validation losses
         for k, v in trainer.metrics.items():
             if "val/" in k:
-                task.get_logger().report_scalar("val/loss", k, v, iteration=trainer.epoch)
+                task.get_logger().report_scalar(
+                    "Losses/Validation", k, v, iteration=trainer.epoch
+                )
+
+        # Log learning rate if enabled
+        if args_visualization.get("log_learning_rate", True):
+            learning_rates = extract_learning_rate(trainer)
+            if learning_rates:
+                clearml_logger.log_learning_rates(learning_rates, trainer.epoch)
+
+        # Log individual loss components if enabled
+        if args_visualization.get("log_loss_components", True):
+            losses = extract_loss_components(trainer)
+            if losses:
+                clearml_logger.log_loss_components(losses, trainer.epoch)
 
 
 def on_fit_epoch_end(trainer: BaseTrainer):
     """Report model information to logger at the end of an epoch."""
     if task := Task.current_task():
-        # You should have access to the validation bboxes under jdict
+        clearml_logger = YOLOClearMLLogger(task)
+
+        # Log epoch time
         task.get_logger().report_scalar(
-            title="Epoch Time",
-            series="Epoch Time",
+            title="Speed/Training",
+            series="epoch_time_seconds",
             value=trainer.epoch_time,
             iteration=trainer.epoch,
         )
 
+        # Log model info on first epoch
         if trainer.epoch == 0:
             for k, v in model_info_for_loggers(trainer).items():
                 task.get_logger().report_single_value(k, v)
+
+        # Log speed metrics if enabled
+        should_log_speed = args_visualization.get("log_speed_metrics", True)
+        has_validator = hasattr(trainer, "validator") and trainer.validator is not None
+        if should_log_speed and has_validator:
+            speeds = extract_speed_metrics(trainer.validator)
+            if speeds:
+                clearml_logger.log_speed_metrics(speeds, trainer.epoch)
 
 
 def on_val_end(validator: BaseTrainer):
@@ -193,10 +238,19 @@ def on_train_end(trainer: BaseTrainer):
     """
     task: Task = Task.current_task()
     if task := Task.current_task():
+        clearml_logger = YOLOClearMLLogger(task)
+
         _log_debug_samples(
             sorted(trainer.validator.save_dir.glob("val*.jpg")), "Validation"
         )
-        # Log final results, CM matrix + PR plots
+
+        # Get class names from data yaml
+        data_yaml = yaml_loader(trainer.args.data)
+        class_names = data_yaml.get("names", [])
+        if isinstance(class_names, dict):
+            class_names = list(class_names.values())
+
+        # Log final results, CM matrix + PR plots (static - kept as fallback)
         files = [
             "results.png",
             "confusion_matrix.png",
@@ -228,11 +282,77 @@ def on_train_end(trainer: BaseTrainer):
         for k, v in trainer.validator.metrics.results_dict.items():
             task.get_logger().report_single_value(k, v)
 
+        # Log interactive confusion matrix if enabled
+        if args_visualization.get("log_interactive_confusion_matrix", True):
+            normalized_matrix, labels, counts_matrix = extract_confusion_matrix_data(
+                trainer.validator, class_names
+            )
+            if normalized_matrix is not None:
+                clearml_logger.log_interactive_confusion_matrix(
+                    normalized_matrix,
+                    labels,
+                    iteration=trainer.epoch,
+                    title="Confusion Matrix",
+                    series="Normalized",
+                )
+            if counts_matrix is not None:
+                clearml_logger.log_interactive_confusion_matrix(
+                    counts_matrix,
+                    labels,
+                    iteration=trainer.epoch,
+                    title="Confusion Matrix",
+                    series="Counts",
+                )
+
+        # Log per-class metrics table if enabled
+        if args_visualization.get("log_per_class_table", True):
+            metrics_df = extract_per_class_metrics(trainer.validator, class_names)
+            if metrics_df is not None:
+                clearml_logger.log_per_class_table(
+                    metrics_df,
+                    iteration=trainer.epoch,
+                    title="Per-Class Metrics",
+                    series="Detailed",
+                )
+
+        # Log interactive PR curves if enabled
+        if args_visualization.get("log_interactive_pr_curves", True):
+            pr_curves = extract_pr_curve_data(trainer.validator, class_names)
+            if pr_curves:
+                clearml_logger.log_pr_curve_plotly(
+                    pr_curves,
+                    iteration=trainer.epoch,
+                    title="PR Curves",
+                    series="All Classes",
+                )
+
+        # Log per-class scatter plots if enabled
+        if args_visualization.get("log_per_class_scatter", True):
+            metrics_df = extract_per_class_metrics(trainer.validator, class_names)
+            if metrics_df is not None and len(metrics_df) > 0:
+                # Log mAP50 per class
+                clearml_logger.log_per_class_scatter(
+                    metrics_df["Class"].tolist(),
+                    metrics_df["mAP50"].tolist(),
+                    "mAP50",
+                    iteration=trainer.epoch,
+                )
+                # Log Precision per class
+                clearml_logger.log_per_class_scatter(
+                    metrics_df["Class"].tolist(),
+                    metrics_df["Precision"].tolist(),
+                    "Precision",
+                    iteration=trainer.epoch,
+                )
+                # Log Recall per class
+                clearml_logger.log_per_class_scatter(
+                    metrics_df["Class"].tolist(),
+                    metrics_df["Recall"].tolist(),
+                    "Recall",
+                    iteration=trainer.epoch,
+                )
+
         # Log the final models
-        # trainer.args.task  # segment, detect, classify
-        # trainer.args.imgsz  # 640
-        # trainer.args.model  # yolo11n-seg.pt
-        data_yaml = yaml_loader(trainer.args.data)
         config_data = {
             "model_name": trainer.args.model.replace(".pt", ""),
             "imgsz": trainer.args.imgsz,

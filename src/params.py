@@ -58,8 +58,8 @@ args_task = {
 
 args_data = {
     "cvat": {
-        "task_ids_train": [967, 745, 71, 4],
-        "task_ids_test": [],
+        "task_ids_train": [741, 733, 731, 728],
+        "task_ids_test": [730],
     },
     "label_studio": {
         "project_id_train": None,
@@ -71,7 +71,7 @@ args_data = {
         "val_ratio": 0.2,
         "test_ratio": None,
     },
-    "class_exclude": None,
+    "class_exclude": "stalk, foreign_object",
     # "attributes_exclude": {"maturity_truth": "background"},  # noqa: ERA001
     "attributes_exclude": None,
     "area_segment_min": 0,
@@ -162,4 +162,15 @@ args_predict = {
         "max_det": 1000,  # maximum number of detections per image
         "stream": True,  # stream mode for real-time inference
     },
+}
+
+args_visualization = {
+    "log_interactive_confusion_matrix": True,  # Use interactive report_confusion_matrix()
+    "log_per_class_table": True,  # Log per-class metrics as DataFrame table
+    "log_interactive_pr_curves": True,  # Use interactive Plotly PR curves
+    "log_confidence_histograms": True,  # Log confidence score distributions
+    "log_learning_rate": True,  # Track learning rate per epoch
+    "log_loss_components": True,  # Separate box, cls, dfl loss logging
+    "log_speed_metrics": True,  # Log preprocess, inference, postprocess times
+    "log_per_class_scatter": True,  # Log per-class metric scatter/bar plots
 }

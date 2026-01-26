@@ -11,6 +11,7 @@ from src.params import (
     args_task,
     args_train,
     args_val,
+    args_visualization,
 )
 from src.utils.logging import get_logger
 
@@ -74,6 +75,7 @@ def config_clearml():
     curr_task.connect(args_val, name="5_Testing")
     curr_task.connect(args_predict, name="6_Predict")
     curr_task.connect(args_export, name="7_Export")
+    curr_task.connect(args_visualization, name="8_Visualization")
 
     exclude_data = args_data.get("class_exclude", "")
     if exclude_data is None:
@@ -102,4 +104,5 @@ def config_clearml():
         args_val,
         args_export,
         args_predict,
+        args_visualization,
     )
