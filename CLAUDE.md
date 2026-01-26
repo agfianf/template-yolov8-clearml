@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A template for training Ultralytics YOLOv8/YOLO11 models with ClearML integration for experiment tracking, dataset management, model registration, and remote execution. Supports multiple data sources (CVAT, S3/MinIO) with COCO-to-YOLO conversion.
 
+## Commands PYthon
+always using uv not python to running python
+```
+PYTHONPATH=. uv run {path}.py
+```
+
+
 ## Common Commands
 
 ```bash
