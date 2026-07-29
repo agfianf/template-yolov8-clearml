@@ -6,8 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
     "albumentations==2.0.8",
-    "clearml-agent==2.0.6",
-    "clearml[s3]==2.1.2",
+    # 3.x is required, not optional: setuptools >=81 dropped pkg_resources, which
+    # clearml-agent <=2.0.7 imports unguarded. 3.0.x caps setuptools <82 and vendors
+    # its own pkg_resources fallback.
+    "clearml-agent==3.0.3",
+    "clearml[s3]==2.1.10",
     "cvat-sdk==2.35.0",
     "httpx==0.28.1",
     "minio>=7.2.20",
@@ -15,16 +18,22 @@ dependencies = [
     "openvino>=2025.4.1",
     "pandas>=2.2.0",
     "pillow>=12.1.0",
-    "plotly==6.0.0",
-    "pydantic==2.12.5",
+    "plotly==6.9.0",
+    "pydantic==2.13.4",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.21",
     "pyyaml>=6.0.3",
     "rich>=14.2.0",
-    "roboflow==1.2.13",
-    "tqdm==4.67.1",
-    "ultralytics==8.4.7",
+    # Hardware-derived window, do not widen without re-checking the agent fleet.
+    # 2.9.x resolves to the +cu128 wheel: needs driver >=525.60.13 (fleet floor is
+    # 550.144.03) and ships sm_75 + sm_86 kernels, covering the Turing boxes
+    # (server1/2) and the Ampere box (server3).
+    # >=2.10 resolves to +cu130, which needs driver >=580 -- no agent host has that,
+    # and it degrades silently to CPU instead of erroring. See servers_clearml.md.
+    "torch>=2.9,<2.10",
+    "tqdm==4.70.0",
+    "ultralytics==8.4.110",
 ]
 
 [dependency-groups]

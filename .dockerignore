@@ -1,23 +1,18 @@
-# Exclude entire directories
-Debug/
-dataset-yolov8/
-tmp-cvat/
-tests/
-tmp/
-.venv/
-runs/
-YOLO11/
+# Deny-by-default. The build consumes exactly three things (see Dockerfile):
+#   uv.lock + pyproject.toml  -> bind-mounted for `uv sync --frozen`
+#   src/                      -> COPY ./src /workspace/src
+# Everything else stays out, so new files at the repo root -- credentials,
+# datasets, caches -- can never reach the daemon by accident.
+*
 
-# Exclude .pt files recursively
+!pyproject.toml
+!uv.lock
+!src/
+
+# Re-exclude junk that would otherwise ride along inside src/
+**/__pycache__/
+**/*.py[cod]
 **/*.pt
 
-# Exclude other unnecessary files
-clearml.conf
-example.agent.conf
-*.log
-*.pyc
-__pycache__/
-*.zip
-*.tar.gz
-*.env
-Makefile
+.venv
+.mypy_cache

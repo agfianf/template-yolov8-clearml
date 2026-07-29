@@ -27,8 +27,8 @@ uv run ruff check --fix     # Lint with auto-fix
 uv run ruff format          # Format code
 
 # Docker
-make build-v2               # Build Python 3.12 image
-make run-docker-v2          # Run in Docker with GPU
+make build                  # Build the training image (yolov11-binsho:py3.12)
+make run-docker             # Run in Docker with GPU
 
 # Export requirements
 make get-req                # Generate requirements.txt from uv
