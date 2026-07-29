@@ -36,7 +36,7 @@ def init_clearml() -> Task:
 
         curr_task.set_script(
             repository="https://github.com/agfianf/template-yolov8-clearml.git",
-            branch="public",  # noqa: ERA001
+            branch="main",  # noqa: ERA001
             working_dir=".",
             entry_point="src/train.py",
         )

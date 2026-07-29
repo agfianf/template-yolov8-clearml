@@ -3,6 +3,8 @@
 # Learn more about .gitignore:
 #     https://www.atlassian.com/git/tutorials/saving-changes/gitignore
 
+servers_binsho.yml
+servers_clearml.md
 # Node artifact files
 node_modules/
 dist/
@@ -66,3 +68,8 @@ clearml.conf
 *.env
 runs/
 YOLO11/
+
+
+.venv
+.mypy_cache
+.vscode
