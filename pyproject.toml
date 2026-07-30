@@ -1,9 +1,15 @@
 [project]
 name = "template-yolov8"
-version = "0.1.0"
-description = "Add your description here"
+# Doubles as the training image tag -- see DOCKER_IMAGE in src/params.py. Bump this
+# whenever the image contents change, and never re-tag a published version: existing
+# ClearML tasks pin the tag they were created with.
+version = "0.2.0"
+description = "YOLO training template with ClearML tracking and remote execution"
 readme = "README.md"
-requires-python = ">=3.12, <3.13"
+# Upper bound is deliberate. torch publishes one cp<minor> wheel set per release;
+# a new Python minor lands before the matching torch wheel does, and an unbounded
+# floor would resolve to a source build (or no candidate at all) on the agents.
+requires-python = ">=3.14, <3.15"
 dependencies = [
     "albumentations==2.0.8",
     # 3.x is required, not optional: setuptools >=81 dropped pkg_resources, which
@@ -31,6 +37,8 @@ dependencies = [
     # (server1/2) and the Ampere box (server3).
     # >=2.10 resolves to +cu130, which needs driver >=580 -- no agent host has that,
     # and it degrades silently to CPU instead of erroring. See servers_clearml.md.
+    # 2.9.1 ships cp314 manylinux wheels, so the Python 3.14 move keeps this exact
+    # build: the resolved version is byte-for-byte what 3.12 resolved to.
     "torch>=2.9,<2.10",
     "tqdm==4.70.0",
     "ultralytics==8.4.110",

@@ -21,7 +21,7 @@ make run                    # PYTHONPATH=. uv run src/train.py
 
 # Run tests
 make test_code              # pytest tests -v
-PYTHONPATH=. uv run pytest -m "not slow"    # skip tests that invoke real exporters
+make test_fast              # skip tests that invoke real exporters
 
 # Test the export stage on its own (~7s, no CVAT, no training, no weights download)
 PYTHONPATH=. uv run pytest tests/yolov8/test_export_smoke.py
@@ -31,8 +31,13 @@ uv run ruff check --fix     # Lint with auto-fix
 uv run ruff format          # Format code
 
 # Docker
-make build                  # Build the training image (yolov11-binsho:py3.12)
+make image-name             # Print the resolved image reference
+make build                  # Build the training image (yolo-trainer:<version>)
 make run-docker             # Run in Docker with GPU
+make push                   # Only meaningful with a registry path (see below)
+
+# Build/push under a registry instead of the bare local name
+make build push TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.0
 
 # Export requirements
 make get-req                # Generate requirements.txt from uv
@@ -77,13 +82,19 @@ YOLO Training
 
 ### Configuration
 
-- **src/params.py**: Default parameters for all pipeline stages
+- **src/params.py**: Default parameters for all pipeline stages, plus `DOCKER_IMAGE` /
+  `DOCKER_ARGUMENTS` — the single source of truth for the training image. The Makefile
+  reads `DOCKER_IMAGE` back out, so `make build` and `set_base_docker()` cannot drift.
+  Override with `TRAINER_IMAGE=...`; keep the tag in step with `version` in
+  `pyproject.toml`.
 - **src/config.py**: Environment variables via Pydantic Settings (CVAT credentials, etc.)
-- Parameters can be overridden in ClearML UI after first run
+- Parameters can be overridden in ClearML UI after first run — except
+  `clearml_project` / `clearml_task_name`, which are read before `Task.connect()` and
+  therefore only apply to a locally launched first run.
 
 ## Code Style
 
-- Python 3.12 required
+- Python 3.14 required
 - Line length: 90 characters
 - Double quotes for strings
 - Ruff for linting/formatting with rules: E, F, I, UP, B, W, C90, N, D, PYI, PT, RET, SIM, ARG, ERA
@@ -110,6 +121,18 @@ YOLO Training
 - **Deprecated export args.** `args_export["params"]` still uses `half` and `int8`, which
   ultralytics has replaced with `quantize`. Tolerated today; `tests/yolov8/test_export_smoke.py`
   fails when that stops being true.
+- **Never re-tag a published image version.** A ClearML task stores the image tag it was
+  created with and keeps requesting it, so overwriting `yolo-trainer:0.2.0` silently
+  changes what every past task reruns on. Bump `version` in `pyproject.toml` and the tag
+  in `DOCKER_IMAGE` together instead.
+- **Python 3.14 defaults `multiprocessing` to `forkserver` on Linux**, not `fork`.
+  Forkserver re-imports the `__main__` module in every dataloader worker, so anything
+  that runs at module scope in `src/train.py` would re-run per worker — re-initialising
+  ClearML and re-downloading datasets. The `if __name__ == "__main__":` guard is what
+  prevents that; keep all work inside `main()`.
+- **`set_base_docker()` replaces the whole container section.** Passing `docker_image`
+  without `docker_arguments` drops the `CLEARML_AGENT_SKIP_*` env vars, and the agent
+  then ignores the image's baked venv and rebuilds one with pip. Always pass both.
 
 ## ClearML Integration Points
 
