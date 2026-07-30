@@ -59,11 +59,11 @@ push:
 	docker push $(IMAGE_NAME)
 
 test_code:
-	pytest tests -v
+	PYTHONPATH=. uv run pytest tests -v
 
 # Everything except the tests that invoke a real exporter -- a few seconds, no GPU.
 test_fast:
-	pytest tests -m "not slow"
+	PYTHONPATH=. uv run pytest tests -m "not slow"
 
 
 # Must mirror the Dockerfile's `uv sync --frozen --no-dev`: this file is fed to
