@@ -7,8 +7,9 @@ from uuid import uuid4
 
 import numpy as np
 
+from src.data.class_map import ClassMap, UnknownClassError
 from src.schema.coco import Coco as CocoSchema
-from src.utils.logging import get_logger, progress
+from src.utils.logging import Tally, get_logger, progress
 from src.yolov8.dataset_report import dataset_stats
 
 
@@ -137,6 +138,8 @@ class Coco2Yolo:
         exclude_class=None,
         attributes_excluded=None,
         area_segment_min=None,
+        class_map: ClassMap | None = None,
+        on_unknown_class: str = "error",
     ):
         """Convert coco format to yolo format.
 
@@ -144,9 +147,15 @@ class Coco2Yolo:
             json_path: (str) path to coco json file.
             use_segments: (bool) whether to use segments to represent bbox.
             output_dir: (str) path to save yolo format labels.
+            class_map: (ClassMap) run-wide name -> index map. Without it the index
+                is this file's own `category_id - 1`, which only agrees with the
+                other sources by luck -- see src/data/class_map.py.
+            on_unknown_class: (str) `error` or `drop`, for a category the map does
+                not list. Only reachable with a pinned `class_names`; a derived map
+                is the union of every source and cannot be missing one.
 
         Return:
-            list of labels.
+            list of labels, in index order.
 
         """
         if exclude_class is None:
@@ -177,6 +186,10 @@ class Coco2Yolo:
         # write labels in txt file
         cat_id2name = coco.get_categoryid_to_namecat(exclude_class=exclude_class)
 
+        # One entry per unmapped label, not per annotation: a missing class costs
+        # one warning line at the end regardless of how many instances it has.
+        unmapped = Tally()
+
         for image_id, img_annotatins in progress(
             img_to_anns.items(), desc="coco -> yolo labels", logger=logger
         ):
@@ -191,6 +204,29 @@ class Coco2Yolo:
                 if ann.iscrowd:
                     continue
 
+                # Resolve the class index before any geometry work, so a dropped
+                # class costs nothing and an unknown one fails on the first sight
+                # of it rather than after writing half the split.
+                class_name = cat_id2name.get(ann.category_id)
+                if class_map is None:
+                    cls = ann.category_id - 1  # category_id starts from 1
+                    class_name = class_name or f"class_{cls}"
+                else:
+                    index = (
+                        class_map.index_of(class_name) if class_name is not None else None
+                    )
+                    if index is None:
+                        label = class_name or f"category_id {ann.category_id}"
+                        if on_unknown_class == "drop":
+                            unmapped.add(label, ann.id)
+                            continue
+                        raise UnknownClassError(
+                            f"{json_path}: class {label!r} is not in the class map "
+                            f"({class_map.describe()}). Add it to class_names, add it "
+                            f"to class_exclude, or set on_unknown_class=drop."
+                        )
+                    cls = index
+
                 # The COCO box format is [top left x, top left y, width, height]
                 box = np.array(ann.bbox, dtype=np.float64)
                 box[:2] += box[2:] / 2  # xy top-left corner to center
@@ -199,12 +235,10 @@ class Coco2Yolo:
                 if box[2] <= 0 or box[3] <= 0:  # if w <= 0 and h <= 0
                     continue
 
-                cls = ann.category_id - 1  # here because category_id starts from 1
                 box = [cls] + box.tolist()
                 if box not in bboxes:
                     bboxes.append(box)
                     # Tally only -- one call per annotation, so it must not log.
-                    class_name = cat_id2name.get(ann.category_id, f"class_{cls}")
                     classes_in_image.add(class_name)
                     dataset_stats.note_annotation(class_name, box[3], box[4])
 
@@ -249,6 +283,22 @@ class Coco2Yolo:
                             f"se_segments={use_segments} -> {e} >> {bboxes}"
                         ) from e
 
+        if unmapped:
+            # An image left with nothing keeps an empty label file and trains as a
+            # background image, which is a real choice and not always the wanted
+            # one -- hence the count here rather than a silent skip.
+            logger.warning(
+                "%s: %s annotation(s) dropped, class not in the class map: %s",
+                os.path.basename(os.path.dirname(os.path.dirname(json_path))),
+                f"{unmapped.total():,}",
+                unmapped.summary(),
+            )
+
+        # The class map, when there is one, is the answer for every source in the
+        # run -- returning this file's own categories is what let the last CVAT
+        # task alone decide data.yaml.
+        if class_map is not None:
+            return list(class_map.names)
         return list(cat_id2name.values())
 
     def setup_directory(self):
@@ -317,6 +367,8 @@ class Coco2Yolo:
         exclude_class=None,
         attributes_excluded=None,
         area_segment_min=None,
+        class_map: ClassMap | None = None,
+        on_unknown_class: str = "error",
     ):
         if exclude_class is None:
             exclude_class = []
@@ -328,6 +380,8 @@ class Coco2Yolo:
             exclude_class=exclude_class,
             attributes_excluded=attributes_excluded,
             area_segment_min=area_segment_min,
+            class_map=class_map,
+            on_unknown_class=on_unknown_class,
         )
         conut_data = self.setup_directory()
         return self.output_dir, list_categories, conut_data

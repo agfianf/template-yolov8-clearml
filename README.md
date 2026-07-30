@@ -120,6 +120,39 @@ args_visualization = {
 - **S3/MinIO**: Specify S3 URIs. (Detection/segmentation support may require further customization.)
 - **Filtering**: Use `class_exclude`, `attributes_exclude`, and `area_segment_min` in `args_data` to filter data before training.
 
+### Class order across sources
+
+A YOLO label file stores a class *index*; COCO stores a category *id*, and CVAT
+hands those out per project. Two projects annotated with the same label names
+still export them in a different order, and a project that never saw a label
+simply omits it — so the old `category_id - 1` made `car` index 0 in one task and
+index 1 in the next, in the same merged dataset. Nothing errored; the model just
+trained against scrambled targets.
+
+`unify_class_order` (on by default) builds **one** name → index map before any
+label file is written, from the union of every source in the run — training
+tasks and the test split alike — and converts every source through it. Matching
+ignores case and surrounding whitespace. The map is logged as a single line:
+
+```
+class map (derived): 3 classes -> 0:car, 1:person, 2:speed_limit
+```
+
+| Key in `args_data` | Meaning |
+|---|---|
+| `unify_class_order` | `True` (default) for the shared map. `False` restores the per-source numbering, and warns if the sources disagree — for reproducing an older run, nothing else. |
+| `class_names` | Pinned order, comma-separated. Empty (default) derives it: the union of every source, sorted. |
+| `on_unknown_class` | `error` (default) or `drop`, for a class the pinned list does not mention. Unreachable when `class_names` is empty. |
+
+Two things worth knowing before a fine-tune:
+
+- **A derived order is reproducible across runs, not across a change to the class
+  list.** Rerunning the same tasks in any order gives the same map, but a new
+  label sorts into the middle and shifts every index after it. Pin `class_names`
+  to the checkpoint's own `names` before training on top of it.
+- **Excluded classes take no index.** `class_exclude` removes them from the map
+  entirely, so `nc` counts only classes that can actually appear.
+
 ## Model Export & Prediction
 
 - After training, the **best** and **last** models are exported and registered to ClearML.

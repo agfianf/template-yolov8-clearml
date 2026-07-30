@@ -8,13 +8,31 @@ vacuously. Capture on the `src` logger directly instead.
 """
 
 import logging
+import os
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
-import pytest
 
-from src.utils import logging as src_logging
+# Before any `src.*` import: src/config.py builds its Settings at module scope, so a
+# test module that reaches src.data.* fails to *collect* without these. pytest.ini
+# declares them under `env =`, which silently does nothing here -- that needs
+# pytest-env, which is not a dependency. Filling them in also keeps a developer's
+# real .env, and the CVAT server behind it, out of the test run: in
+# pydantic-settings an environment variable outranks the dotenv file.
+for _cvat_var in (
+    "CVAT_USERNAME",
+    "CVAT_PASSWORD",
+    "CVAT_ORGANIZATION",
+    "CVAT_FORMAT_DATA",
+    "CVAT_HOST",
+    "CVAT_OUTPUT_DIR",
+):
+    os.environ.setdefault(_cvat_var, "")
+
+import pytest  # noqa: E402
+
+from src.utils import logging as src_logging  # noqa: E402
 
 
 class _ListHandler(logging.Handler):

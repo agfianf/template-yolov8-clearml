@@ -97,6 +97,17 @@ class DataParams(BaseModel):
         default_factory=DataParamsInner, description="Data split ratios"
     )
     class_exclude: Any | None = Field(None, description="Classes to exclude")
+    unify_class_order: bool = Field(
+        True,
+        description="One class order for every source, not each source's own ids",
+    )
+    class_names: Any | None = Field(
+        None,
+        description="Pinned class order, comma-separated; empty derives it",
+    )
+    on_unknown_class: Literal["error", "drop"] = Field(
+        "error", description="A class the pinned class_names does not list"
+    )
     attributes_exclude: Any | None = Field(None, description="Attributes to exclude")
     area_segment_min: int = Field(0, description="Minimum area for segments")
 
