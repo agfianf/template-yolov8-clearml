@@ -26,6 +26,10 @@ make test_fast              # skip tests that invoke real exporters
 # Test the export stage on its own (~7s, no CVAT, no training, no weights download)
 PYTHONPATH=. uv run pytest tests/yolov8/test_export_smoke.py
 
+# Test the data stage on its own (<1s, builds a mini COCO tree in tmp_path).
+# Also asserts log volume does not grow with dataset size.
+PYTHONPATH=. uv run pytest tests/data/test_data_stage_smoke.py
+
 # Linting and formatting (via pre-commit or directly)
 uv run ruff check --fix     # Lint with auto-fix
 uv run ruff format          # Format code
@@ -92,6 +96,45 @@ YOLO Training
   `clearml_project` / `clearml_task_name`, which are read before `Task.connect()` and
   therefore only apply to a locally launched first run.
 
+## Logging
+
+Everything goes through `src/utils/logging.py`. `print()` is banned — ruff `T20`
+enforces it and `tests/utils/test_no_print.py` covers the `from rich import print`
+alias that `T20` cannot see.
+
+| Level | Meaning |
+|---|---|
+| ERROR | the run is affected: an export failed, validation crashed |
+| WARNING | degraded but continuing: CVAT export timed out, unpaired labels |
+| INFO | stage boundaries, and **one summary line per unit of work** |
+| DEBUG | per-item detail: each filter decision, raw response bodies |
+
+**The one rule: no INFO line may be emitted from inside a loop over dataset items.**
+Tally with `src.utils.logging.Tally` and log one summary. Log volume must not grow
+with dataset size; `tests/data/test_data_stage_smoke.py` asserts exactly that by
+running each stage at two input sizes and expecting the same line count.
+
+Turning the volume up:
+
+- `LOG_LEVEL=debug` (or `10`) as an env var. An unreadable value falls back to INFO
+  and says so.
+- The `0_Console` parameter group in the ClearML UI: `log_level` (empty = follow
+  `$LOG_LEVEL`) and `progress` (`auto` | `on` | `off`). At DEBUG, ultralytics' own
+  per-class validation output and per-image predict output come back too.
+
+Two caveats worth knowing before chasing a missing line:
+
+- **`0_Console` only applies from `src/train.py`'s call to `set_log_level()`.**
+  Anything logged earlier — `init_clearml()`, import-time lines in `src/config.py` —
+  follows the env var or the default, whatever the UI says.
+- **`task.execute_remotely()` kills the local process on the next line.** A value set
+  in the UI therefore only ever takes effect on the agent — which is the one console
+  we actually read.
+
+Measuring against the baseline (334 lines of our own output on a 3-epoch, 4-CVAT-task
+run): `grep -cE '\| src\.' console.txt`. The `%(name)s` field in the format string is
+what makes that a one-command check.
+
 ## Code Style
 
 - Python 3.14 required
@@ -130,6 +173,15 @@ YOLO Training
   that runs at module scope in `src/train.py` would re-run per worker — re-initialising
   ClearML and re-downloading datasets. The `if __name__ == "__main__":` guard is what
   prevents that; keep all work inside `main()`.
+- **Quieten ultralytics per call, never with `YOLO_VERBOSE=0`.** The env var is read
+  once in `ultralytics/utils/__init__.py` and drops every ultralytics logger to
+  ERROR — the per-epoch metrics table and the AMP/dataset warnings go with it.
+  `args_val["verbose"]` and `args_predict["model"]["verbose"]` are the right knobs,
+  and `src/train.py` turns them back on at `LOG_LEVEL=DEBUG`.
+- **Console parameters live in `args_console`, not `args_logging`.**
+  `config_clearml()` does `args_train.update(args_logging)` and `args_train` is
+  splatted into `model_yolo.train()`, which rejects unknown keys outright
+  (`SyntaxError: 'log_level' is not a valid YOLO argument`).
 - **`set_base_docker()` replaces the whole container section.** Passing `docker_image`
   without `docker_arguments` drops the `CLEARML_AGENT_SKIP_*` env vars, and the agent
   then ignores the image's baked venv and rebuilds one with pip. Always pass both.

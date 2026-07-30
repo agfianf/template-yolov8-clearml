@@ -9,6 +9,11 @@ import yaml
 from clearml import Task
 from yaml.loader import SafeLoader
 
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
+
 
 def get_task_yolo_name(arg_model_name) -> Literal["segment", "detect", "classify"]:
     task_yolo = "None"
@@ -34,7 +39,7 @@ def model_name_handler(arg_model_name):
         new_path_model_yaml = os.path.join(os.getcwd(), f"src/yolov8/{arg_model_name}")
         shutil.copy(default_path_model_yaml, new_path_model_yaml)
 
-        print("config_file", default_path_model_yaml, new_path_model_yaml)
+        logger.debug("config_file %s -> %s", default_path_model_yaml, new_path_model_yaml)
         return new_path_model_yaml
     new_model_name = arg_model_name + ".pt"
     return new_model_name

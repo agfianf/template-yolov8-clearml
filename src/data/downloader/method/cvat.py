@@ -9,11 +9,35 @@ import requests
 
 from cvat_sdk import make_client
 from requests.auth import HTTPBasicAuth
-from rich import print
-from tqdm import tqdm
 
 from src.config import settings
 from src.data.downloader.base_downloader import BaseDownloader
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
+
+# CVAT builds the export archive asynchronously and answers 202 until it is
+# ready. Without a pause the loop re-asks as fast as the round trip allows,
+# which is both a needless load on the server and an unbounded log.
+POLL_INTERVAL_SECONDS = 2
+POLL_TIMEOUT_SECONDS = 120
+
+# Enough of an error body to recognise the failure, not enough to flood the
+# console -- CVAT answers errors with full HTML pages.
+BODY_PREVIEW_CHARS = 200
+
+STATUS_MESSAGES = {
+    200: "200: Download of file started",
+    201: "201: Output file is ready for downloading",
+    202: "202: Exporting has been started",
+    405: "405: Format is not available",
+}
+
+
+def describe_task_status(response) -> str:
+    """Human-readable form of an export-status response."""
+    return STATUS_MESSAGES.get(response.status_code, f"{response.status_code}: unknown")
 
 
 class CVATHTTPDownloaderV1(BaseDownloader):
@@ -61,26 +85,17 @@ class CVATHTTPDownloaderV1(BaseDownloader):
         return response.json()
 
     @staticmethod
-    def print_task_status(response):
-        status_messages = {
-            200: "200: Download of file started",
-            201: "201: Output file is ready for downloading",
-            202: "202: Exporting has been started",
-            405: "405: Format is not available",
-        }
-        print(status_messages.get(response.status_code, "Unknown status"))
+    def save_file(response, file_name) -> float:
+        """Write the archive to disk and return its size in MB.
 
-    @staticmethod
-    def save_file(response, file_name):
+        No progress bar: `response.content` has already pulled the whole body
+        into memory by the time we get here, so a bar over `iter_content` would
+        be timing a memcpy rather than a download.
+        """
         total_size_mb = round(len(response.content) / 1024000, 2)
-        print("Downloading", file_name)
-        print("TOTAL SIZE: ", total_size_mb, "MB")
         with open(file_name, "wb") as f:
-            for chunk in tqdm(
-                response.iter_content(chunk_size=1024000), total=total_size_mb, ncols=72
-            ):
-                f.write(chunk)
-        print("Downloaded: ", total_size_mb, "MB")
+            f.write(response.content)
+        return total_size_mb
 
     def extract_file(self, file_name, project_info, task_info):
         with zipfile.ZipFile(file_name, "r") as zip_ref:
@@ -89,7 +104,7 @@ class CVATHTTPDownloaderV1(BaseDownloader):
             )
             shutil.rmtree(extract_dir, ignore_errors=True)
             zip_ref.extractall(extract_dir)
-            print("Extracted to:", extract_dir)
+            logger.debug("extracted to %s", extract_dir)
         os.remove(file_name)
         return extract_dir
 
@@ -116,24 +131,23 @@ class CVATHTTPDownloaderV1(BaseDownloader):
                 files=files,
                 params=params,
             )
-            print(
-                response.status_code,
-                text_response.get(response.status_code, response.text),
+            message = text_response.get(
+                response.status_code, response.text[:BODY_PREVIEW_CHARS]
             )
-            if response.status_code != 201 and response.status_code != 202:
-                print(
-                    "[ERROR_UPDATE_CVAT_ANNOTATIONS]",
+            if response.status_code not in (201, 202):
+                logger.error(
+                    "cvat task %s annotation upload failed: %s %s",
+                    task_id,
                     response.status_code,
-                    text_response.get(response.status_code, response.text),
+                    message,
                 )
                 break
 
             response.raise_for_status()
             if response.status_code == 201:
-                print(response.status_code, text_response[response.status_code])
-                # response = requests.get(url=download_url + '&action=download', auth=self.auth, allow_redirects=True)  # noqa: E501, ERA001
-                # self.print_task_status(response)  # noqa: ERA001
+                logger.info("cvat task %s: %s", task_id, message)
                 break
+            logger.debug("cvat task %s upload: %s", task_id, message)
 
     def download(self, task_id: int, annotations_only: bool = False):
         """return: task_info, project_info, file_name_zip."""
@@ -149,48 +163,63 @@ class CVATHTTPDownloaderV1(BaseDownloader):
         try:
             project_info = self.get_project_info(task_info=task_info)
         except Exception as e:
-            print(download_url, e)
+            # Never the URL: it carries CVAT_HOST and this repo is public.
+            logger.error("cvat task %s: cannot read project info: %s", task_id, e)
             raise Exception(
                 f"ERROR taskid: {task_id} | task_info response={task_info}"
             ) from e
 
         timeout_start = time.time()
-        first_exporting_progress = False
+        polls = 0
         while True:
             response = requests.get(
                 url=download_url,
                 auth=self.auth,
             )
-
-            if response.status_code == 202 and first_exporting_progress:
-                first_exporting_progress = True
-                print("🍆", end="\r", flush=True)
-            else:
-                self.print_task_status(response)
+            polls += 1
+            logger.debug(
+                "cvat task %s poll %s: %s", task_id, polls, describe_task_status(response)
+            )
 
             response.raise_for_status()
             if response.status_code == 201:
-                print()
                 response = requests.get(
                     url=download_url + "&action=download",
                     auth=self.auth,
                     allow_redirects=True,
                 )
-                self.print_task_status(response)
+                logger.debug(
+                    "cvat task %s download: %s", task_id, describe_task_status(response)
+                )
                 file_name_zip = f"{self.download_dir}/{task_info['name']}.zip"
-                self.save_file(response, file_name_zip)
+                size_mb = self.save_file(response, file_name_zip)
+                logger.info(
+                    'cvat task %s "%s": ready after %s polls / %.1fs, %s MB',
+                    task_id,
+                    task_info.get("name"),
+                    polls,
+                    time.time() - timeout_start,
+                    size_mb,
+                )
                 break
 
-            if time.time() - timeout_start > 120:
-                print("Timeout Download DATA from CVAT")
-                break
+            if time.time() - timeout_start > POLL_TIMEOUT_SECONDS:
+                # raise, not break: `file_name_zip` is unbound on this path, so
+                # breaking used to surface as an UnboundLocalError below and hide
+                # the timeout entirely.
+                raise TimeoutError(
+                    f"cvat task {task_id}: export not ready after"
+                    f" {POLL_TIMEOUT_SECONDS}s ({polls} polls)"
+                )
+
+            time.sleep(POLL_INTERVAL_SECONDS)
         return task_info, project_info, file_name_zip
 
     def get_local_dataset_coco(self, task_ids: list[int], annotations_only: bool = False):
         """Return: ls_path_dataset = [dataset_dir1, ...)]."""
         ls_path_dataset = []
         for task_id in task_ids:
-            print("Downloading task_id: ", task_id, " ...")
+            logger.debug("downloading cvat task %s", task_id)
             task_info, project_info, file_name_zip = self.download(
                 task_id, annotations_only=annotations_only
             )
@@ -251,24 +280,12 @@ class CVATHTTPDownloaderV2(BaseDownloader):
         return response.json()
 
     @staticmethod
-    def print_task_status(response):
-        status_messages = {
-            200: "200: Download of file started",
-            201: "201: Output file is ready for downloading",
-            202: "202: Exporting has been started",
-            405: "405: Format is not available",
-        }
-        print(status_messages.get(response.status_code, "Unknown status"))
-
-    @staticmethod
-    def save_file(response, file_name):
+    def save_file(response, file_name) -> float:
+        """Write the archive to disk and return its size in MB."""
         total_size_mb = round(len(response.content) / 1024000, 2)
-        print("Downloading", file_name, " | SIZE: ", total_size_mb, "MB")
         with open(file_name, "wb") as f:
-            for chunk in tqdm(
-                response.iter_content(chunk_size=1024000), total=total_size_mb, ncols=72
-            ):
-                f.write(chunk)
+            f.write(response.content)
+        return total_size_mb
 
     def extract_file(self, file_name, project_info, task_info):
         with zipfile.ZipFile(file_name, "r") as zip_ref:
@@ -277,7 +294,7 @@ class CVATHTTPDownloaderV2(BaseDownloader):
             )
             shutil.rmtree(extract_dir, ignore_errors=True)
             zip_ref.extractall(extract_dir)
-            print("Extracted to:", extract_dir)
+            logger.debug("extracted to %s", extract_dir)
         os.remove(file_name)
         return extract_dir
 
@@ -304,24 +321,23 @@ class CVATHTTPDownloaderV2(BaseDownloader):
                 files=files,
                 params=params,
             )
-            print(
-                response.status_code,
-                text_response.get(response.status_code, response.text),
+            message = text_response.get(
+                response.status_code, response.text[:BODY_PREVIEW_CHARS]
             )
-            if response.status_code != 201 and response.status_code != 202:
-                print(
-                    "[ERROR_UPDATE_CVAT_ANNOTATIONS]",
+            if response.status_code not in (201, 202):
+                logger.error(
+                    "cvat task %s annotation upload failed: %s %s",
+                    task_id,
                     response.status_code,
-                    text_response.get(response.status_code, response.text),
+                    message,
                 )
                 break
 
             response.raise_for_status()
             if response.status_code == 201:
-                print(response.status_code, text_response[response.status_code])
-                # response = requests.get(url=download_url + '&action=download', auth=self.auth, allow_redirects=True)  # noqa: E501, ERA001
-                # self.print_task_status(response)  # noqa: ERA001
+                logger.info("cvat task %s: %s", task_id, message)
                 break
+            logger.debug("cvat task %s upload: %s", task_id, message)
 
     def download(self, task_id: int, annotations_only: bool = False):
         """return: task_info, project_info, file_name_zip."""
@@ -337,41 +353,53 @@ class CVATHTTPDownloaderV2(BaseDownloader):
         project_info = self.get_project_info(task_info=task_info)
 
         timeout_start = time.time()
-        first_exporting_progress = False
+        polls = 0
         while True:
             response = requests.get(
                 url=download_url, auth=self.auth, params={"org": self.organization}
             )
-
-            if response.status_code == 202 and first_exporting_progress:
-                first_exporting_progress = True
-                print("🍆", end="\r", flush=True)
-            else:
-                self.print_task_status(response)
+            polls += 1
+            logger.debug(
+                "cvat task %s poll %s: %s", task_id, polls, describe_task_status(response)
+            )
 
             response.raise_for_status()
             if response.status_code == 201:
-                print()
                 response = requests.get(
                     url=download_url + "&action=download",
                     auth=self.auth,
                     allow_redirects=True,
                 )
-                self.print_task_status(response)
+                logger.debug(
+                    "cvat task %s download: %s", task_id, describe_task_status(response)
+                )
                 file_name_zip = f"{self.download_dir}/{task_info['name']}.zip"
-                self.save_file(response, file_name_zip)
+                size_mb = self.save_file(response, file_name_zip)
+                logger.info(
+                    'cvat task %s "%s": ready after %s polls / %.1fs, %s MB',
+                    task_id,
+                    task_info.get("name"),
+                    polls,
+                    time.time() - timeout_start,
+                    size_mb,
+                )
                 break
 
-            if time.time() - timeout_start > 120:
-                print("Timeout Download DATA from CVAT")
-                break
+            if time.time() - timeout_start > POLL_TIMEOUT_SECONDS:
+                # raise, not break -- see the note on the V1 downloader.
+                raise TimeoutError(
+                    f"cvat task {task_id}: export not ready after"
+                    f" {POLL_TIMEOUT_SECONDS}s ({polls} polls)"
+                )
+
+            time.sleep(POLL_INTERVAL_SECONDS)
         return task_info, project_info, file_name_zip
 
     def get_local_dataset_coco(self, task_ids: list[int], annotations_only: bool = False):
         """return: ls_path_dataset = [dataset_dir1, ...)]."""
         ls_path_dataset = []
         for task_id in task_ids:
-            print("Downloading task_id: ", task_id, " ...")
+            logger.debug("downloading cvat task %s", task_id)
             task_info, project_info, file_name_zip = self.download(
                 task_id, annotations_only=annotations_only
             )
@@ -421,11 +449,17 @@ class CVATSDKDownloader(BaseDownloader):
             export_path = os.path.join(self.download_dir, filename_zip)
             if os.path.exists(export_path):
                 os.remove(export_path)
-            print("exporting...")
+            started = time.time()
             task.export_dataset(
                 include_images=True, format_name="COCO 1.0", filename=export_path
             )
-            print("exported")
+            logger.info(
+                'cvat task %s "%s": exported in %.1fs, %s MB',
+                task_id,
+                task.name,
+                time.time() - started,
+                round(os.path.getsize(export_path) / 1024000, 2),
+            )
 
             os.makedirs(self.download_dir, exist_ok=True)
             with zipfile.ZipFile(export_path, "r") as zip_ref:

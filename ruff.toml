@@ -33,7 +33,10 @@ order-by-type = true
 exclude = [
   "src/migrations/*",
 ]
-extend-select = ["E", "F", "I", "UP", "B", "W", "C90", "N", "D", "PYI", "PT", "RET", "SIM", "ARG", "ERA"]
+# T20 bans print(). The pipeline logs through src/utils/logging.py so that every
+# line carries a level and a module name and can be filtered; a print() is
+# invisible to all of that. Enforced here rather than asked for in prose.
+extend-select = ["E", "F", "I", "UP", "B", "W", "C90", "N", "D", "PYI", "PT", "RET", "SIM", "ARG", "ERA", "T20"]
 ignore = [
   "ANN001",
   "B008",
@@ -56,6 +59,9 @@ unfixable = ["F401"]
 
 
 [lint.per-file-ignores]
+# The print() ban is about pipeline output, which is what runs on an agent and
+# what we have to read afterwards. Test scaffolding can print.
+"tests/**" = ["T20"]
 "src/tests/test_app/test*.py" = ["S101", "PT006", "ARG001"]
 "src/tests/test_app/**/test*.py" = ["S101", "PT006", "ARG001"]
 "conftest.py" = ["S101", "PT006", "ARG001", "F401"]

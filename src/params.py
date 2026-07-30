@@ -14,7 +14,7 @@ import os
 #
 # TRAINER_IMAGE overrides it -- point it at a registry path to run agents off a
 # pushed image, e.g. TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.0.
-DOCKER_IMAGE = os.getenv("TRAINER_IMAGE", "yolo-trainer:0.2.0")
+DOCKER_IMAGE = os.getenv("TRAINER_IMAGE", "yolo-trainer:0.2.1")
 
 # Passed to every containerised run. The two SKIP_* flags are what make the image's
 # baked venv authoritative: without them the agent ignores /workspace/.venv and
@@ -77,6 +77,18 @@ args_export = {
 args_logging = {
     "project": "YOLO/Training",
     "name": "training-yolo",
+}
+
+# Console verbosity. A dict of its own on purpose: config_clearml() does
+# `args_train.update(args_logging)` and passes args_train straight to
+# model_yolo.train(), where ultralytics rejects unknown keys --
+# "SyntaxError: 'log_level' is not a valid YOLO argument" would break every run.
+#
+# Only takes effect from the point train.py applies it, so anything logged
+# before that (init_clearml, imports) still follows $LOG_LEVEL / the default.
+args_console = {
+    "log_level": "",  # empty = follow $LOG_LEVEL, which defaults to INFO
+    "progress": "auto",  # auto (bars on a TTY only) | on | off
 }
 
 args_task = {
@@ -174,6 +186,9 @@ args_val = {
     "rect": False,  # rectangular val with each batch collated for minimum padding
     "save_crop": True,  # save cropped images
     "split": "val",  # dataset split to use for validation, i.e. 'val', 'test' or 'train'
+    # One console line per class from models/yolo/detect/val.py; the same numbers
+    # are logged to ClearML as a per-class table. Re-enabled at LOG_LEVEL=DEBUG.
+    "verbose": False,
 }
 
 
@@ -196,6 +211,12 @@ args_predict = {
         "iou": 0.7,  # intersection over union (IoU) threshold for NMS
         "max_det": 1000,  # maximum number of detections per image
         "stream": True,  # stream mode for real-time inference
+        # One line per image from ultralytics/engine/predictor.py -- 40 of them,
+        # the single biggest block of noise in the run. Re-enabled at DEBUG.
+        # Note this is per-call verbose, not YOLO_VERBOSE=0: the env var drops
+        # every ultralytics logger to ERROR and would take the per-epoch metric
+        # table and the AMP/dataset warnings with it.
+        "verbose": False,
     },
 }
 

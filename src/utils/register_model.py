@@ -68,12 +68,11 @@ def register_model_to_clearml(
         "imgsz": imgsz,
         "task": task_yolo,
     }
-    logger.info("Config dict: %s", config_dict)
+    logger.debug("config dict: %s", config_dict)
     output_model.update_design(config_dict=config_dict)
     output_model.set_metadata("imgsz", str(imgsz), "int")
     output_model.set_metadata("task", task_yolo, "str")
     output_model.set_metadata("format", format_model, "str")
 
-    logger.info(
-        "Model registered with ClearML: %s | %s | %s", name_model, output_model.id, url_model
-    )
+    logger.info("registered %s with ClearML: %s", name_model, output_model.id)
+    logger.debug("model url: %s", url_model)

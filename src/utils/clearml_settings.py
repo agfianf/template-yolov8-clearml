@@ -6,6 +6,7 @@ from src.params import (
     DOCKER_ARGUMENTS,
     DOCKER_IMAGE,
     args_augment,
+    args_console,
     args_data,
     args_export,
     args_logging,
@@ -68,6 +69,7 @@ def config_clearml():
     This function will be called in the main function of train.py
     """  # noqa: D205
     curr_task: Task = Task.current_task()
+    curr_task.connect(args_console, name="0_Console")
     curr_task.connect(args_task, name="1_Task")
     curr_task.connect(args_data, name="2_Data")
     curr_task.connect(args_augment, name="3_Augment")

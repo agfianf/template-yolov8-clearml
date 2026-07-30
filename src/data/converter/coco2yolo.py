@@ -7,10 +7,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from tqdm import tqdm
-
 from src.schema.coco import Coco as CocoSchema
+from src.utils.logging import get_logger, progress
 
+
+logger = get_logger(__name__)
 
 image_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "ico", "webp", "svg"]
 
@@ -151,7 +152,7 @@ class Coco2Yolo:
             exclude_class = []
 
         if os.path.exists(output_dir):
-            print(f"❌ [convert_coco_to_yolo] Remove {output_dir}")
+            logger.debug("removing stale label dir %s", output_dir)
             shutil.rmtree(output_dir)
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -162,7 +163,7 @@ class Coco2Yolo:
         coco = CocoSchema(**coco_d)
 
         images = coco.get_imageid_to_image()
-        img_to_anns = coco.get_imageid_to_annotations(
+        img_to_anns, _report = coco.get_imageid_to_annotations(
             exclude_class=exclude_class,
             attributes_excluded=attributes_excluded,
             area_segment_min=area_segment_min,
@@ -171,8 +172,8 @@ class Coco2Yolo:
         # write labels in txt file
         cat_id2name = coco.get_categoryid_to_namecat(exclude_class=exclude_class)
 
-        for image_id, img_annotatins in tqdm(
-            img_to_anns.items(), desc="Converting COCO to YOLO"
+        for image_id, img_annotatins in progress(
+            img_to_anns.items(), desc="coco -> yolo labels", logger=logger
         ):
             img = images[image_id]
             h, w, fp_image = img.height, img.width, img.file_name
@@ -231,7 +232,6 @@ class Coco2Yolo:
                         )  # cls, box or segments
                         file.write(("%g " * len(line)).rstrip() % line + "\n")
                     except Exception as e:
-                        print("Error", e)
                         raise Exception(
                             f"ERROR CONVERTER: {txt_file} idx:{i} u"
                             f"se_segments={use_segments} -> {e} >> {bboxes}"
@@ -240,15 +240,17 @@ class Coco2Yolo:
         return list(cat_id2name.values())
 
     def setup_directory(self):
-        print("setup_directory runnnig")
-
         # create new output directry
         self.out_img_dir = os.path.join(self.output_dir, "images")
         self.out_lbl_dir = os.path.join(self.output_dir, "labels")
         Path(self.out_img_dir).mkdir(parents=True, exist_ok=True)
         Path(self.out_lbl_dir).mkdir(parents=True, exist_ok=True)
 
-        print(self.src_img_dir, os.path.exists(self.src_img_dir))
+        logger.debug(
+            "src images %s (exists=%s)",
+            self.src_img_dir,
+            os.path.exists(self.src_img_dir),
+        )
         # copy to new output directory with uuid name
         count_files = 0
 
@@ -257,14 +259,6 @@ class Coco2Yolo:
             self.src_img_dir, extensions=image_extensions
         )
         total_labels = count_files_in_directory(self.src_lbl_yolo, extensions=[".txt"])
-        print(
-            "is_match:",
-            total_images == total_labels,
-            "len images",
-            total_images,
-            "len labels",
-            total_labels,
-        )
 
         count_no_annotations = 0
 
@@ -290,13 +284,18 @@ class Coco2Yolo:
                 else:
                     count_no_annotations += 1
 
-        print(
-            "is_match",
-            count_files == count_no_annotations,
-            "count_files project:",
-            count_files,
-            "count_no_annotations project:",
-            count_no_annotations,
+        # The invariant is that every source image was either copied or skipped
+        # for having no label. The old check compared copied against skipped,
+        # which is not a relationship that means anything.
+        is_match = count_files + count_no_annotations == total_images
+        logger.info(
+            "%s: %s images -> %s copied, %s without labels (labels on disk %s, match=%s)",
+            os.path.basename(self.src_dir.rstrip("/")),
+            f"{total_images:,}",
+            f"{count_files:,}",
+            f"{count_no_annotations:,}",
+            f"{total_labels:,}",
+            is_match,
         )
         return count_files
 
@@ -309,7 +308,6 @@ class Coco2Yolo:
     ):
         if exclude_class is None:
             exclude_class = []
-        print("Start Converting and Filtering COCO to YOLO")
         self.src_lbl_yolo = os.path.join(self.src_dir, "labels")
         list_categories = Coco2Yolo.convert_coco_to_yolo(
             json_path=self.src_lbl_filepath,
@@ -319,20 +317,16 @@ class Coco2Yolo:
             attributes_excluded=attributes_excluded,
             area_segment_min=area_segment_min,
         )
-        print("Setup Directory: Manage Files to structure of YOLO")
         conut_data = self.setup_directory()
-        print("Done Converting and Filtering COCO to YOLO")
         return self.output_dir, list_categories, conut_data
 
 
 if __name__ == "__main__":
-    print("start testing")
     ls_path_dir_projects = ["fyypp-numplate-no-aug", "IOTSmartCampus", "truckplate"]
     ls_path_dir_projects = [
         os.path.join("tmp-cvat/Plate-Detector", path) for path in ls_path_dir_projects
     ]
     if os.path.exists("./testing-debug-ds"):
-        print("❌ Remove testing-debug-ds")
         shutil.rmtree("./testing-debug-ds")
 
     tmp_total_count = 0
@@ -350,8 +344,8 @@ if __name__ == "__main__":
         tmp_total_count += converter.setup_directory()
 
     countfiles_finel = len(os.listdir("./testing-debug-ds/images"))
-    print(
-        "countfiles_finel",
+    logger.info(
+        "countfiles_finel %s vs %s (match=%s)",
         countfiles_finel,
         tmp_total_count,
         tmp_total_count == countfiles_finel,

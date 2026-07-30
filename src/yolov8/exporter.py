@@ -1,14 +1,19 @@
 import os
+import time
 
 from typing import Any, Literal
 
 import torch
 import yaml
 
-from clearml import OutputModel, Task
-from rich import print
 from ultralytics import YOLO
 from yaml.loader import SafeLoader
+
+from src.utils.logging import get_logger
+from src.utils.register_model import register_model_to_clearml
+
+
+logger = get_logger(__name__)
 
 
 # Constants for format-specific parameters
@@ -28,6 +33,22 @@ FORMAT_PARAMETERS = {
     ],
     "engine": None,  # None indicates that all parameters should be used
 }
+
+
+def _size_mb(path: str) -> float:
+    """Size of an exported artifact -- openvino produces a directory, not a file."""
+    if os.path.isfile(path):
+        return os.path.getsize(path) / 1024**2
+    if os.path.isdir(path):
+        return (
+            sum(
+                os.path.getsize(os.path.join(root, name))
+                for root, _, files in os.walk(path)
+                for name in files
+            )
+            / 1024**2
+        )
+    return 0.0
 
 
 def load_data_yaml(dataset_folder: str) -> dict:
@@ -55,9 +76,9 @@ def export_model_format(
     yolo: YOLO, format_model: str, imgsz: int, export_params: dict[str, Any]
 ) -> str:
     """Export model in the specified format with appropriate parameters."""
-    print(f"Exporting {format_model.upper()}...")
+    logger.debug("exporting %s (imgsz=%s)", format_model, imgsz)
     if format_model == "engine":
-        print("torch.cuda.is_available():", torch.cuda.is_available())
+        logger.debug("torch.cuda.is_available(): %s", torch.cuda.is_available())
         return yolo.export(
             format=format_model,
             imgsz=imgsz,
@@ -66,7 +87,7 @@ def export_model_format(
         )
 
     filtered_params = filter_export_parameters(format_model, export_params)
-    print(f"Using parameters for `{format_model.upper()}`: {filtered_params}")
+    logger.debug("parameters for %s: %s", format_model, filtered_params)
 
     if "fraction" in yolo.overrides:
         yolo.overrides.pop("fraction")
@@ -78,49 +99,6 @@ def export_model_format(
         format=format_model,
         imgsz=imgsz,
         **filtered_params,
-    )
-
-
-def register_model_with_clearml(
-    path_model: str,
-    format_model: str,
-    model_name: str,
-    data_yaml: dict,
-    task_yolo: str,
-    imgsz: int,
-) -> None:
-    """Register the exported model with ClearML."""
-    name_model = f"{format_model}-{model_name}"
-    target_filename = f"{name_model}.{format_model}"
-    task: Task = Task.current_task()
-    output_model = OutputModel(
-        task=task,
-        name=name_model,
-        comment=str(data_yaml["names"])
-        + "\n this CONVERTED BY USING BEST VERSION of this Experiment",
-        label_enumeration={lbl: idx for idx, lbl in enumerate(data_yaml["names"])},
-        tags=[task_yolo, task.id],
-    )
-
-    url_model = output_model.update_weights(
-        weights_filename=path_model,
-        target_filename=target_filename,
-        auto_delete_file=False,
-    )
-    output_model.wait_for_uploads()
-
-    config_dict = {
-        "net": model_name.replace(".pt", ""),
-        "imgsz": imgsz,
-        "task": task_yolo,
-    }
-    print(f"Config dict: {config_dict}")
-    output_model.update_design(config_dict=config_dict)
-    output_model.set_metadata("imgsz", imgsz, "int")
-    output_model.set_metadata("task", task_yolo, "str")
-
-    print(
-        f"Model registered with ClearML: {name_model} | {output_model.id} | {url_model}"
     )
 
 
@@ -152,18 +130,18 @@ def export_handler(
     Raises
     ------
     Exception
-        If an error occurs during model export, it is caught and printed, and the process
+        If an error occurs during model export, it is caught and logged, and the process
         continues for other formats.
 
     """
-    print("\n[Export Model]")
-
+    # No banner here: src/train.py already logs "[Exporting Model]".
     data_yaml = load_data_yaml(dataset_folder)
 
-    for format_model, is_use in args_export["format"].items():
-        if not is_use:
-            continue
+    requested = [fmt for fmt, is_use in args_export["format"].items() if is_use]
+    succeeded = 0
 
+    for format_model in requested:
+        started = time.monotonic()
         try:
             path_model = export_model_format(
                 yolo=yolo,
@@ -171,9 +149,13 @@ def export_handler(
                 imgsz=args_training["imgsz"],
                 export_params=args_export["params"],
             )
-            print(f"Exported to: {path_model}")
 
-            register_model_with_clearml(
+            # One implementation of registration, in src/utils/register_model.py.
+            # The copy that used to live here logged the same two lines with the
+            # same wording -- that is where the "duplicate" messages came from --
+            # and had already drifted: no `format` metadata, no lifecycle tags,
+            # and imgsz sent as an int to a field declared "int" as a string.
+            register_model_to_clearml(
                 path_model=path_model,
                 format_model=format_model,
                 model_name=args_task["model_name"],
@@ -181,10 +163,22 @@ def export_handler(
                 task_yolo=task_yolo,
                 imgsz=args_training["imgsz"],
             )
+            succeeded += 1
+            logger.info(
+                "export %s: ok in %.1fs -> %s (%.1f MB)",
+                format_model,
+                time.monotonic() - started,
+                os.path.basename(str(path_model).rstrip("/")),
+                _size_mb(str(path_model)),
+            )
 
         except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            print(f"Error exporting to {format_model}: {e}")
+            # TensorRT without a GPU is an absent capability, not a defect --
+            # warn rather than raising the alarm with a full traceback.
+            if format_model == "engine" and not torch.cuda.is_available():
+                logger.warning("export engine: skipped, no CUDA device available (%s)", e)
+            else:
+                logger.exception("export %s: failed", format_model)
             continue
+
+    logger.info("export: %d/%d formats ok", succeeded, len(requested))

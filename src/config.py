@@ -3,9 +3,13 @@ import os
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 path_to_env = os.path.join(os.getcwd(), ".env")
-print("path_to_env", path_to_env, os.path.exists(path_to_env))
+logger.debug("path_to_env %s exists=%s", path_to_env, os.path.exists(path_to_env))
 
 
 class Settings(BaseSettings):
@@ -27,5 +31,6 @@ settings = Settings()
 settings.CVAT_HOST = settings.CVAT_HOST.replace("\\x3a", ":")
 
 TMP_DIR_CVAT = "./tmp-cvat"
-print("Environment variables loaded successfully.")
-print("CVAT_HOST:", settings.CVAT_HOST)
+# Never log CVAT_HOST: the console of every task is readable to anyone with
+# access to the ClearML project, and this repository is public.
+logger.debug("environment variables loaded successfully")

@@ -1,6 +1,39 @@
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel
+
+from src.utils.logging import Tally, get_logger
+
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class FilterReport:
+    """What annotation filtering did, as counts rather than as a line per item."""
+
+    total: int = 0
+    kept: int = 0
+    dropped_area: int = 0
+    dropped_class: Tally = field(default_factory=Tally)
+    dropped_attr: Tally = field(default_factory=Tally)
+
+    @property
+    def dropped(self) -> int:
+        return self.total - self.kept
+
+    def reasons(self, area_segment_min: float | None = None) -> str:
+        parts = []
+        if self.dropped_class:
+            parts.append(
+                f"class {self.dropped_class.total():,} [{self.dropped_class.summary()}]"
+            )
+        if self.dropped_area:
+            parts.append(f"area<{area_segment_min} = {self.dropped_area:,}")
+        if self.dropped_attr:
+            parts.append(f"attr {self.dropped_attr.summary()}")
+        return ", ".join(parts)
 
 
 class License(BaseModel):
@@ -56,7 +89,7 @@ class Coco(BaseModel):
     def get_categoryid_to_namecat(
         self,
         exclude_class: list[str] = None,  # noqa: ARG002
-    ) -> dict[int, str]:  # noqa: ARG002
+    ) -> dict[int, str]:
         categories_map = {}
         # exclude_class  = [lbl.lower() for lbl in exclude_class]  # noqa: ERA001
         # if len(exclude_class) > 0:
@@ -78,31 +111,31 @@ class Coco(BaseModel):
         exclude_class: list[str] = None,
         attributes_excluded: dict[str, str] = None,
         area_segment_min: float = None,
-    ) -> dict[int, list[Annotation]]:
-        """Return a dictionary of image_id to annotations.
+    ) -> tuple[dict[int, list[Annotation]], FilterReport]:
+        """Return image_id -> annotations, plus a report of what was filtered out.
 
-        Filters are applied at the annotation level.
+        Filters are applied at the annotation level. The per-annotation decisions
+        are tallied and logged as one INFO line; individual decisions go to DEBUG,
+        because there is one per annotation and a dataset has tens of thousands.
         """
-        if exclude_class is None:
-            exclude_class = []
         if exclude_class is None:
             exclude_class = []
 
         imageid2anns = defaultdict(list)
         exclude_class = [lbl.lower() for lbl in exclude_class]
         id2label = self.get_categoryid_to_namecat()
-        print(id2label)
+        logger.debug("categories: %s", id2label)
 
-        for ann in self.annotations:
+        report = FilterReport(total=len(self.annotations or []))
+
+        for ann in self.annotations or []:
             skip = False
-            if area_segment_min is not None:  # noqa: SIM102
-                if ann.area < area_segment_min:
-                    print(
-                        f"[Area Filters Active] minimal: {area_segment_min} | actual:",
-                        ann.area,
-                    )
-                    skip = True
-                    continue
+            if area_segment_min is not None and ann.area < area_segment_min:
+                logger.debug(
+                    "ann %s dropped: area %s < %s", ann.id, ann.area, area_segment_min
+                )
+                report.dropped_area += 1
+                continue
 
             if attributes_excluded is not None:
                 for attr_name, attr_value in attributes_excluded.items():
@@ -118,35 +151,47 @@ class Coco(BaseModel):
                     if attributes_dataset is None:
                         continue
 
-                    # print("attributes_excluded", attributes_excluded, ann.attributes)  # noqa: E501, ERA001
                     if isinstance(attributes_dataset, set):
                         intersection = attributes_config.intersection(attributes_dataset)
                         if intersection:
-                            print(
-                                "[Attributes Filters Active]",
+                            logger.debug(
+                                "ann %s dropped: attribute %s in %s",
+                                ann.id,
                                 attr_name,
-                                attributes_config,
-                                attributes_dataset,
+                                sorted(intersection),
                             )
+                            report.dropped_attr.add(attr_name, ann.id)
                             skip = True
                             break
                         break
 
             if id2label[ann.category_id] in exclude_class:
-                print("[Class Filters]", id2label[ann.category_id], "Class Exclude")
+                logger.debug(
+                    "ann %s dropped: class %s excluded", ann.id, id2label[ann.category_id]
+                )
+                report.dropped_class.add(id2label[ann.category_id], ann.id)
                 skip = True
 
             if skip:
                 continue
 
+            report.kept += 1
             imageid2anns[ann.image_id].append(ann)
 
-        return imageid2anns
+        reasons = report.reasons(area_segment_min)
+        logger.info(
+            "annotations: %s total -> %s kept, %s dropped%s",
+            f"{report.total:,}",
+            f"{report.kept:,}",
+            f"{report.dropped:,}",
+            f" ({reasons})" if reasons else "",
+        )
+        return imageid2anns, report
 
     def checking_task(self):
         task_type = set()
         if len(self.annotations) == 0:
-            print("No annotations")
+            logger.warning("no annotations in this COCO file")
             return list(task_type)
 
         for ann in self.annotations:

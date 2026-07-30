@@ -5,6 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from minio import Minio
 
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
+
 
 class MinioDatasetDownloader:
     def __init__(self):
@@ -45,7 +50,6 @@ class MinioDatasetDownloader:
 
         ls_class = set()
         # Iterate over the classes in the dataset
-        print("\t⚡ Downloading dataset")
         time_start = time.time()
         for class_name, urls in dataset_dict.items():
             # Create the class directory if it doesn't exist
@@ -75,7 +79,12 @@ class MinioDatasetDownloader:
                         destination_path,
                     )
         duration = round(time.time() - time_start, 2)
-        print(f"\t✅ Completed download dataset in {duration} secs!")
+        logger.info(
+            "minio: %d classes, %d files in %ss",
+            len(ls_class),
+            sum(len(urls) for urls in dataset_dict.values()),
+            duration,
+        )
         return ls_class
 
 
