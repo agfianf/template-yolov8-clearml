@@ -108,14 +108,27 @@ def extract_loss_components(trainer: BaseTrainer) -> dict[str, float]:
     """
     losses = {}
 
-    if hasattr(trainer, "loss_items") and trainer.loss_items is not None:
-        loss_names = getattr(trainer, "loss_names", ["box_loss", "cls_loss", "dfl_loss"])
-        for name, value in zip(loss_names, trainer.loss_items, strict=False):
+    # Ultralytics >=8.4 made loss_items and tloss dicts of {name: value}; before that
+    # loss_items was a tensor of values zipped against loss_names, and tloss a scalar.
+    # Iterating a dict yields its keys, so the old zip silently paired names with names
+    # and float() blew up on 'box_loss'. Handle both shapes.
+    loss_items = getattr(trainer, "loss_items", None)
+    if isinstance(loss_items, dict):
+        losses.update({name: float(value) for name, value in loss_items.items()})
+    elif loss_items is not None:
+        loss_names = getattr(trainer, "loss_names", None) or (
+            "box_loss",
+            "cls_loss",
+            "dfl_loss",
+        )
+        for name, value in zip(loss_names, loss_items, strict=False):
             losses[name] = float(value)
 
-    # Also try to get from tloss
-    if hasattr(trainer, "tloss") and trainer.tloss is not None:
-        losses["total_loss"] = float(trainer.tloss)
+    tloss = getattr(trainer, "tloss", None)
+    if isinstance(tloss, dict):
+        losses["total_loss"] = float(sum(tloss.values()))
+    elif tloss is not None:
+        losses["total_loss"] = float(tloss)
 
     return losses
 

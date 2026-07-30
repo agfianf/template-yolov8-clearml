@@ -15,21 +15,17 @@ WORKDIR /workspace
 ENV PATH="/workspace/.venv/bin:$PATH"
 ENV PYTHONPATH="/workspace"
 
-# -m gives nonroot a real home. Without it, libraries that write per-user config
-# (ultralytics, matplotlib) fail on /home/nonroot and fall back to /tmp -- matplotlib
-# warns this slows imports and hurts multiprocessing, which affects dataloader workers.
-RUN groupadd -r nonroot && useradd -r -m -g nonroot nonroot
-
 # Install the application dependencies.
-# chown runs inside this same layer on purpose: as a separate `RUN chown -R`, Docker's
-# copy-on-write duplicates the whole ~8GB venv into a second layer, doubling the image.
 RUN --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-dev --no-cache \
-    && chown -R nonroot:nonroot /workspace/.venv \
-    && chown nonroot:nonroot /workspace
+    uv sync --frozen --no-dev --no-cache
 
 # Copy the application into the container.
-COPY --chown=nonroot:nonroot ./src /workspace/src
+COPY ./src /workspace/src
 
-USER nonroot
+# Deliberately runs as root. clearml-agent's docker-mode bootstrap needs it: it writes
+# /etc/apt/apt.conf.d/, chowns /root/.cache/pip, copies /root/.ssh and runs apt-get.
+# Under `USER nonroot` every one of those fails and the task hangs before reaching
+# src/train.py -- verified against task f206e189 on NEW-gpu-machine-server2.
+# Dropping the nonroot user also removes the `chown -R` that was duplicating the
+# whole ~8GB venv into a second layer.

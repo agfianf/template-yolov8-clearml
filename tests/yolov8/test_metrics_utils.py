@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.yolov8.metrics_utils import (
     collect_prediction_confidences,
@@ -127,8 +128,8 @@ class TestExtractLossComponents:
         result = extract_loss_components(trainer)
         assert result == {}
 
-    def test_returns_loss_components(self):
-        """Test that function returns individual loss components."""
+    def test_returns_loss_components_legacy_sequence(self):
+        """Test the pre-8.4 shape: loss_items a sequence, tloss a scalar."""
         trainer = MagicMock()
         trainer.loss_items = [0.5, 0.3, 0.2]
         trainer.loss_names = ["box_loss", "cls_loss", "dfl_loss"]
@@ -141,6 +142,26 @@ class TestExtractLossComponents:
         assert result["cls_loss"] == 0.3
         assert result["dfl_loss"] == 0.2
         assert result["total_loss"] == 1.0
+
+    def test_returns_loss_components_dict_shape(self):
+        """Test the ultralytics >=8.4 shape: loss_items and tloss are dicts.
+
+        Regression guard. Iterating a dict yields its keys, so the old
+        zip(loss_names, loss_items) paired names with names and float() raised
+        ValueError: could not convert string to float: 'box_loss' -- which killed
+        training at the first on_train_epoch_end callback.
+        """
+        trainer = MagicMock()
+        trainer.loss_items = {"box_loss": 0.5, "cls_loss": 0.3, "dfl_loss": 0.2}
+        trainer.loss_names = tuple(trainer.loss_items)
+        trainer.tloss = {"box_loss": 0.4, "cls_loss": 0.2, "dfl_loss": 0.1}
+
+        result = extract_loss_components(trainer)
+
+        assert result["box_loss"] == 0.5
+        assert result["cls_loss"] == 0.3
+        assert result["dfl_loss"] == 0.2
+        assert result["total_loss"] == pytest.approx(0.7)
 
 
 class TestExtractLearningRate:
