@@ -178,8 +178,26 @@ def test_is_tty_is_evaluated_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     assert is_tty() is False
 
 
-def test_progress_emits_exactly_one_summary_line(capture_src_logs) -> None:
+def test_progress_stays_silent_at_info(capture_src_logs) -> None:
+    """Callers emit their own INFO summary; progress() must not double it.
+
+    The level is raised to DEBUG first and the *handler* filters at INFO, so this
+    fails if progress() ever logs at INFO -- rather than passing vacuously
+    because nothing was logged at all.
+    """
+    set_log_level(logging.DEBUG)
     with capture_src_logs(logging.INFO) as records:
+        consumed = list(progress(range(500), desc="units"))
+
+    assert len(consumed) == 500
+    assert records == []
+
+
+def test_progress_emits_exactly_one_summary_line_at_debug(capture_src_logs) -> None:
+    # Before the capture: get_logger() inside progress() runs setup_logging(),
+    # which decides the level on its first call and would otherwise reset it.
+    set_log_level(logging.DEBUG)
+    with capture_src_logs(logging.DEBUG) as records:
         consumed = list(progress(range(500), desc="units"))
 
     assert len(consumed) == 500

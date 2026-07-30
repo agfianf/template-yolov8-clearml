@@ -229,10 +229,15 @@ def progress[T](
     total: int | None = None,
     logger: logging.Logger | None = None,
 ) -> Iterator[T]:
-    """Iterate with a tqdm bar on a TTY, and one summary line either way.
+    """Iterate with a tqdm bar on a TTY, and a DEBUG summary either way.
 
     `disable=None` is tqdm's own "only draw on a TTY" mode, so a redirected
-    agent console gets the summary line and nothing else.
+    agent console gets no bar at all.
+
+    The summary is DEBUG, not INFO, because every caller already emits its own
+    INFO summary for the same unit of work -- on a real run this printed
+    "coco -> yolo labels: 87 items in 0.1s" immediately followed by
+    "87 images -> 87 copied", one pair per CVAT task.
     """
     from tqdm import tqdm
 
@@ -249,4 +254,4 @@ def progress[T](
     for item in tqdm(iterable, desc=desc, total=total, disable=disable):
         count += 1
         yield item
-    log.info("%s: %d items in %.1fs", desc, count, time.monotonic() - started)
+    log.debug("%s: %d items in %.1fs", desc, count, time.monotonic() - started)

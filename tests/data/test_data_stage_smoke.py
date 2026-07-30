@@ -200,9 +200,8 @@ def test_convert_volume_is_constant(
             use_segments=False, exclude_class=["stalk"]
         )
 
-    # Budget for one CVAT task: annotation filtering, label conversion, and the
-    # file layout summary.
-    assert len(records) == 3, [r.getMessage() for r in records]
+    # Budget for one CVAT task: annotation filtering, and the file layout summary.
+    assert len(records) == 2, [r.getMessage() for r in records]
 
 
 @pytest.mark.parametrize("n_images", [10, 200])
@@ -216,8 +215,8 @@ def test_split_volume_is_constant(
     with capture_src_logs(logging.INFO) as records:
         split_folder_yolo(source_dir=str(out_dir), train_ratio=0.8, valid_ratio=0.2)
 
-    # The progress summary and the split summary.
-    assert len(records) == 2, [r.getMessage() for r in records]
+    # Just the split summary; progress() reports at DEBUG.
+    assert len(records) == 1, [r.getMessage() for r in records]
 
 
 # 10 images minimum: with 5, num_valid is int(5 * (1 - 0.8)) == 0 and
@@ -236,6 +235,5 @@ def test_setup_dataset_volume_is_constant(
     with capture_src_logs(logging.INFO) as records:
         setup_dataset(dataset_dir=str(out_dir), label_names=categories)
 
-    # split progress, split summary, data.yaml -- the plan's budget of 3 for
-    # "Split + data.yaml".
-    assert len(records) == 3, [r.getMessage() for r in records]
+    # The split summary and data.yaml -- the whole "Split + data.yaml" stage.
+    assert len(records) == 2, [r.getMessage() for r in records]
