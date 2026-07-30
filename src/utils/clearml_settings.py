@@ -3,6 +3,8 @@ import os
 from clearml import InputModel, Task
 
 from src.params import (
+    DOCKER_ARGUMENTS,
+    DOCKER_IMAGE,
     args_augment,
     args_data,
     args_export,
@@ -28,33 +30,31 @@ def init_clearml() -> Task:
         req_path = os.path.join(curr_dir, "requirements.txt")
         Task.add_requirements(req_path)
         curr_task = Task.init(
-            project_name="Template/Yolov11",
-            task_name="yolov11-train",
+            project_name=args_task["clearml_project"],
+            task_name=args_task["clearml_task_name"],
             reuse_last_task_id=False,
             auto_connect_frameworks={"pytorch": False, "matplotlib": False},
         )
 
         curr_task.set_script(
             repository="https://github.com/agfianf/template-yolov8-clearml.git",
-            branch="main",  # noqa: ERA001
+            branch="main",
             working_dir=".",
             entry_point="src/train.py",
         )
 
+    # Both arguments must be passed together. set_base_docker() replaces the whole
+    # container section, so naming only docker_image silently drops the arguments --
+    # the agent then ignores the baked venv and tries to build one with pip.
     curr_task.set_base_docker(
-        docker_image="yolov11-binsho:py3.12",
-        docker_arguments=[
-            "-e CLEARML_AGENT_SKIP_PYTHON_ENV_INSTALL=1",
-            "-e CLEARML_AGENT_SKIP_PIP_VENV_INSTALL=/workspace/.venv/bin/python",
-            "-e PYTHONPATH=/workspace",
-            "--gpus all",
-            "--ipc=host",
-            "--shm-size=50gb",
-        ],
+        docker_image=DOCKER_IMAGE,
+        docker_arguments=DOCKER_ARGUMENTS,
     )
 
-    tags = ["🏷️ v2.7"]
-    curr_task.set_tags(tags)
+    # add_tags, not set_tags: set_tags replaces the list, so it wiped any tag added
+    # from the ClearML UI on the next run. The image tag is recorded because a task
+    # outlives the image it ran on and the UI shows no other trace of which one.
+    curr_task.add_tags([f"image:{DOCKER_IMAGE.rsplit(':', 1)[-1]}"])
 
     return Task.current_task()
 

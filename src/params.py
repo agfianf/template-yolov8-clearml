@@ -1,6 +1,35 @@
 # https://docs.ultralytics.com/usage/cfg/#train
 # https://docs.ultralytics.com/usage/cfg/#augmentation
 
+import os
+
+
+# Single source of truth for the training image. The Makefile reads this constant
+# rather than declaring its own copy, and set_base_docker() stamps it onto every
+# task, so `make build` and what the agents pull can never drift apart.
+#
+# The tag mirrors `version` in pyproject.toml. Bump both together; never re-tag a
+# version that agents have already pulled, because a ClearML task stores the tag it
+# was created with and will keep requesting it forever.
+#
+# TRAINER_IMAGE overrides it -- point it at a registry path to run agents off a
+# pushed image, e.g. TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.0.
+DOCKER_IMAGE = os.getenv("TRAINER_IMAGE", "yolo-trainer:0.2.0")
+
+# Passed to every containerised run. The two SKIP_* flags are what make the image's
+# baked venv authoritative: without them the agent ignores /workspace/.venv and
+# rebuilds an environment with pip from the task's recorded packages.
+DOCKER_ARGUMENTS = [
+    "-e CLEARML_AGENT_SKIP_PYTHON_ENV_INSTALL=1",
+    "-e CLEARML_AGENT_SKIP_PIP_VENV_INSTALL=/workspace/.venv/bin/python",
+    "-e PYTHONPATH=/workspace",
+    "--gpus all",
+    # Dataloader workers exchange batches through shared memory; Docker's 64MB
+    # default is far too small and shows up as a silent worker crash mid-epoch.
+    "--ipc=host",
+    "--shm-size=50gb",
+]
+
 args_augment = {
     "hsv_h": 0.015,  # image HSV-Hue augmentation (fraction)
     "hsv_s": 0.7,  # image HSV-Saturation augmentation (fraction)
@@ -46,13 +75,19 @@ args_export = {
 }
 
 args_logging = {
-    "project": "Debug/yolov8",
+    "project": "YOLO/Training",
     "name": "training-yolo",
 }
 
 args_task = {
     "model_name": "yolo11n-seg",
     "model_latest_id": "",
+    # Where a *locally launched* run creates its task. Read by init_clearml() before
+    # Task.connect(), so editing these two in the ClearML UI renames nothing -- a task
+    # that already exists keeps the project it was created in, and a clone inherits it.
+    # Move an existing task with the UI's own project field instead.
+    "clearml_project": "YOLO/Training",
+    "clearml_task_name": "yolo-train",
     # "pretrained": "(model_id)"
 }
 

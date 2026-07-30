@@ -1,10 +1,19 @@
-# Referenced by set_base_docker() in src/utils/clearml_settings.py and by every
-# existing ClearML task -- do not rename the image without updating those too.
-IMAGE_NAME=yolov11-binsho:py3.12
+# The image reference is defined once, in src/params.py, and read back here -- so
+# `make build` and the set_base_docker() call that every task inherits can never name
+# different images. Override for a registry:
+#   make build push TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.0
+# src/params.py imports nothing outside the stdlib, so this needs no venv.
+IMAGE_NAME := $(shell PYTHONPATH=. python3 -c "from src.params import DOCKER_IMAGE; print(DOCKER_IMAGE)")
+IMAGE_VERSION := $(lastword $(subst :, ,$(IMAGE_NAME)))
 
 # ClearML Agent variables
 TASK_ID ?=
 QUEUE ?= default
+
+# Print the resolved image reference -- use this to confirm what an override produced
+# before spending a build on it.
+image-name:
+	@echo $(IMAGE_NAME)
 
 run:
 	PYTHONPATH=. uv run src/train.py
@@ -22,10 +31,20 @@ run-docker:
 
 build:
 	DOCKER_BUILDKIT=1 docker build \
+	--build-arg IMAGE_VERSION=$(IMAGE_VERSION) \
 	-t $(IMAGE_NAME) .
 
+# Only meaningful once TRAINER_IMAGE points at a registry path; a bare name has
+# nowhere to go. Agents on other hosts otherwise need `docker save | ssh | docker load`.
+push:
+	docker push $(IMAGE_NAME)
+
 test_code:
-	pytest tests -v 
+	pytest tests -v
+
+# Everything except the tests that invoke a real exporter -- a few seconds, no GPU.
+test_fast:
+	pytest tests -m "not slow"
 
 
 # Must mirror the Dockerfile's `uv sync --frozen --no-dev`: this file is fed to

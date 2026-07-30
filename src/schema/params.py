@@ -52,7 +52,7 @@ class ExportConfig(BaseModel):
 
 
 class LoggingParams(BaseModel):
-    project: str = Field("Debug/yolov8", description="Project name for logging")
+    project: str = Field("YOLO/Training", description="Project name for logging")
     name: str = Field("training-yolo", description="Experiment name for logging")
 
 

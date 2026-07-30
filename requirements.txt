@@ -311,13 +311,11 @@ tuspy==0.2.5
     # via cvat-sdk
 typing-extensions==4.16.0
     # via
-    #   anyio
     #   cvat-sdk
     #   minio
     #   onnx
     #   pydantic
     #   pydantic-core
-    #   referencing
     #   torch
     #   typing-inspection
 typing-inspection==0.4.2
