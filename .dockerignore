@@ -1,12 +1,16 @@
-# Deny-by-default. The build consumes exactly three things (see Dockerfile):
+# Deny-by-default. The build consumes exactly four things (see Dockerfile):
 #   uv.lock + pyproject.toml  -> bind-mounted for `uv sync --frozen`
+#   VERSION                   -> COPY VERSION /workspace/VERSION
 #   src/                      -> COPY ./src /workspace/src
 # Everything else stays out, so new files at the repo root -- credentials,
-# datasets, caches -- can never reach the daemon by accident.
+# datasets, caches -- can never reach the daemon by accident. Adding a file the
+# Dockerfile needs without unignoring it here fails the build outright:
+# 'failed to compute cache key: "/VERSION": not found'.
 *
 
 !pyproject.toml
 !uv.lock
+!VERSION
 !src/
 
 # Re-exclude junk that would otherwise ride along inside src/
