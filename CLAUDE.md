@@ -138,6 +138,81 @@ Measuring against the baseline (334 lines of our own output on a 3-epoch, 4-CVAT
 run): `grep -cE '\| src\.' console.txt`. The `%(name)s` field in the format string is
 what makes that a one-command check.
 
+## Reporting to ClearML
+
+Three modules, one direction of dependency:
+`metrics_utils.py` (read ultralytics) → `clearml_logger.py` (report) →
+`callbacks.py` (decide when). `dataset_report.py` does the same for the data stage.
+Every report is gated by a flag in `args_visualization` (`src/params.py`), so it is
+switchable from the `8_Visualization` group in the ClearML UI.
+
+**Cadence rule, the sibling of the logging rule: report volume must not grow with
+epoch count.** Scalars are series and are meant to grow one point per epoch; plots,
+tables and image galleries are not. Anything heavy belongs in
+`report_validation_analysis()`, which runs once per validation pass.
+`tests/yolov8/test_callbacks.py::TestReportVolume` asserts this by running the
+per-epoch hooks at 3 and 30 epochs and requiring an identical heavy-report count.
+
+### Ultralytics facts that are easy to get wrong
+
+Read these before touching `metrics_utils.py`; each one is a bug we shipped or nearly
+shipped, and each has a regression test that fails if it is undone.
+
+- **Per-class arrays are indexed by `ap_class_index`, not by class id.** It contains
+  only classes with ground truth in the split, so slicing a `names` list against
+  `box.p` mislabels every row after an absent class. Use `metrics.summary()`, which
+  resolves names via `names[ap_class_index[i]]` — and on `SegmentMetrics` also yields
+  `Mask-P/R/F1`. Per-class mask *mAP* is not in `summary()`; it is `seg.ap50` / `seg.ap`.
+- **The PR-curve attribute is `prec_values`, not `py`.** Reading `py` returns nothing
+  and the plot silently never appears. Prefer `metrics.curves_results`, which returns
+  `[x, y, xlabel, ylabel]` per family with the axis labels included, paired positionally
+  with `metrics.curves` for the `(B)` / `(M)` name.
+- **`SegmentMetrics.fitness` is `seg.fitness() + box.fitness()`** — a 0–2 sum of two
+  mAP50-95 values, not a 0–1 metric. For detection it is exactly mAP50-95.
+- **`SegmentMetrics.maps` is an element-wise sum** of box and mask per class, not a
+  concatenation. Any per-class chart built from it is meaningless; use `summary()`.
+- **Validation metrics are stale in `on_train_epoch_end`.** That hook fires at
+  `engine/trainer.py:569`; `validate()` runs at `:577`. Report them from
+  `on_fit_epoch_end` (`:605`) or epoch 0 shows zeros and epoch N shows N−1.
+- **`metrics.stats` is cleared one line after it is processed** (`get_stats()`,
+  `detect/val.py:277-278`). Anything needing raw per-detection data — a TP-vs-FP
+  confidence split, a calibration curve — must capture it in `on_val_batch_end`, the
+  last hook before that. `ValStatsAccumulator` exists for this.
+- **The confusion matrix is `matrix[predicted, ground_truth]`, normalized by column**
+  (`sum(0)`). Normalizing by row gives precision-like numbers that contradict the
+  `confusion_matrix_normalized.png` uploaded under the same title.
+- **The confusion matrix and the TP/FP/FN gallery are box-IoU based even for
+  segmentation** — `SegmentationValidator` inherits `update_metrics`, so
+  `process_batch` never sees masks. Label those plots "Box". Mask-aware ranking comes
+  from `metrics.seg.image_metrics`, which *is* fed by `mask_iou`.
+- **Three different thresholds are in play** and read as contradictions otherwise: mAP
+  and the curves use `conf=0.001`; the P/R/F1 scalars ultralytics prints are at each
+  class's max-F1 confidence; the confusion matrix uses `conf=args.conf` with
+  `iou_thres=0.45` hard-coded — *not* `args_val["iou"]`. The threshold to actually
+  deploy at is reported separately under `Operating Point`.
+- **`args_val["visualize"]` is uncapped**: it writes one GT/FP/TP/FN panel per
+  validated image into `<save_dir>/visualizations`. It is enabled for the single final
+  `val()` only, and only the worst N panels are uploaded.
+- **ClearML image retention is per title/series.** Put the rank in the series
+  (`worst-box-00`) and the epoch in `iteration`, so each rank slot keeps its own
+  history. Folding the filename into the series mints a new series whenever a different
+  image becomes the worst.
+
+### Deliberately not implemented
+
+No new dependencies were added, which rules out three things worth knowing about:
+
+- **AP small/medium/large and AR@k.** Ultralytics has this in `coco_evaluate`
+  (`detect/val.py:475`) but gates it on `save_json and (is_coco or is_lvis)` — never
+  true for CVAT/S3 data — and it needs `faster-coco-eval`, which has no cp314 wheel and
+  would be source-built inside the agent container. Without it there is no principled
+  answer to "is this a small-object problem?".
+- **TIDE's six-way error typology** (Cls/Loc/Both/Dup/Bkg/Miss) — needs `tidecv`. It
+  does *not* need COCO JSON; the barrier is only the dependency. The worst-N TP/FP/FN
+  galleries are the qualitative stand-in.
+- **Boundary IoU / boundary F-score.** Mask AP under-penalizes boundary error, so mask
+  sharpness is genuinely unmeasured here.
+
 ## Code Style
 
 - Python 3.14 required

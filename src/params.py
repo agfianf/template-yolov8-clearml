@@ -249,10 +249,26 @@ args_predict = {
 args_visualization = {
     "log_interactive_confusion_matrix": True,  # Use interactive report_confusion_matrix()
     "log_per_class_table": True,  # Log per-class metrics as DataFrame table
-    "log_interactive_pr_curves": True,  # Use interactive Plotly PR curves
+    "log_interactive_pr_curves": True,  # Plotly PR/F1/P/R-vs-conf curves, box and mask
     "log_confidence_histograms": True,  # Log confidence score distributions
     "log_learning_rate": True,  # Track learning rate per epoch
     "log_loss_components": True,  # Separate box, cls, dfl loss logging
     "log_speed_metrics": True,  # Log preprocess, inference, postprocess times
     "log_per_class_scatter": True,  # Log per-class metric scatter/bar plots
+    # --- per-epoch, cheap ---------------------------------------------------------
+    # mask mAP minus box mAP. Segmentation runs only; a no-op on a detect model.
+    "log_mask_box_gap": True,
+    # --- once per validation run, heavier -----------------------------------------
+    # F1-optimal confidence, global and per class. This is the threshold to deploy at,
+    # and it is none of the other three thresholds visible in the task (mAP uses 0.001,
+    # the confusion matrix 0.25/IoU-0.45, args_val["conf"] only filters validation).
+    "log_optimal_confidence": True,
+    # Worst-scoring validation images as a table, plus their GT/FP/TP/FN panels when
+    # args_val["visualize"] produced them. Ranked by mask F1 on a segmentation run.
+    "log_worst_images": True,
+    "worst_images_limit": 16,
+    # TP-vs-FP confidence split and the reliability diagram. Requires the
+    # on_val_batch_end capture, because ultralytics clears metrics.stats immediately
+    # after processing them.
+    "log_calibration": True,
 }

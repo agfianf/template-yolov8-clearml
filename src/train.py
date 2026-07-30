@@ -17,7 +17,7 @@ from src.params import args_console
 from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
 from src.utils.logging import get_logger, resolve_level, set_log_level, set_progress_mode
-from src.yolov8.callbacks import callbacks
+from src.yolov8.callbacks import callbacks, report_validation_analysis, val_stats
 from src.yolov8.clearml_logger import YOLOClearMLLogger
 from src.yolov8.data import DataHandler
 from src.yolov8.exporter import export_handler
@@ -195,6 +195,30 @@ def _predicting_result(
                 )
 
 
+def _report_final_scalars(final_metrics, split_label: str) -> None:
+    """Report the standalone val() headline numbers as ClearML single values.
+
+    Scalars from the training loop are per-epoch series; these are one-off summary values
+    for the split the model was finally measured on, so they are reported as single values
+    under a distinct prefix rather than appended to the training series.
+    """
+    task: Task | None = Task.current_task()
+    if task is None or final_metrics is None:
+        return
+
+    results = getattr(final_metrics, "results_dict", None)
+    if not results:
+        return
+
+    prefix = split_label.strip().lower()
+    for key, value in results.items():
+        try:
+            task.get_logger().report_single_value(f"{prefix}-{key}", float(value))
+        except Exception as e:
+            logger.debug("could not report final scalar %s: %s", key, e)
+    logger.info("reported %d final %s metrics", len(results), prefix)
+
+
 def main():
     logger.info("ultralytics version: %s", ultralytics.__version__)
     # initialialization
@@ -287,7 +311,24 @@ def main():
 
     try:
         args_val["batch"] = 32
-        model_yolo.val(data=data_yaml_file, **args_val)
+        # `visualize` makes ultralytics write a GT/FP/TP/FN panel per validated image
+        # into <save_dir>/visualizations (models/yolo/detect/val.py:196). It is uncapped
+        # -- one file per image -- so it is enabled here, for the single final pass, and
+        # never during training. Only the worst N panels are then uploaded.
+        args_val["visualize"] = args_visualization.get("log_worst_images", True)
+        val_stats.reset()
+        final_metrics = model_yolo.val(data=data_yaml_file, **args_val)
+
+        # on_train_end does not fire for a standalone val(), so nothing would otherwise
+        # report this split at all -- the previous code discarded the return value.
+        split_label = "Test " if args_val["split"] == "test" else "Final "
+        report_validation_analysis(
+            model_yolo.validator,
+            iteration=0,
+            gallery_dir=getattr(model_yolo.validator, "save_dir", None),
+            title_prefix=split_label,
+        )
+        _report_final_scalars(final_metrics, split_label)
     except Exception as e:
         logger.exception("Error during validation: %s", e)
 
