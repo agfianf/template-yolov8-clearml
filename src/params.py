@@ -202,9 +202,21 @@ args_val = {
     "batch": 16,  # number of images per batch (-1 for AutoBatch)
     "save_json": False,  # save results to JSON file
     "save_hybrid": False,  # save hybrid version of labels (labels + additional predictions)  # noqa: E501
-    "conf": 0.25,  # object confidence threshold for detection
+    # 0.001 is the ultralytics *val* default (cfg/default.yaml:55), and it is not a
+    # cosmetic choice: args_val["conf"] is passed straight into NMS
+    # (detect/val.py:118), so anything below it is discarded before the metrics ever
+    # see it. The 0.25 that used to be here truncated the high-recall tail of every PR
+    # curve and understated mAP by ~12% relative on a realistic confidence
+    # distribution. It also blinded the operating-point and calibration reports below
+    # 0.25 -- they could not recommend or measure a threshold they never saw.
+    # The confusion matrix wants the opposite value; it is pinned separately by
+    # on_val_batch_start. See args_visualization["confusion_matrix_conf"].
+    "conf": 0.001,
     "iou": 0.7,  # intersection over union (IoU) threshold for NMS
-    "max_det": 100,  # maximum number of detections per image
+    # 300 is the ultralytics default. 100 caps recall on crowded images and so lowers
+    # mAP independently of `conf`. Check "Instances per image" in the Dataset report
+    # before lowering it again.
+    "max_det": 300,
     "half": True,  # use half precision (FP16)
     "device": 0,  # device to run on, i.e. cuda device=0/1/2/3 or device=cpu
     "dnn": False,  # use OpenCV DNN for ONNX inference
@@ -249,10 +261,31 @@ args_predict = {
 args_visualization = {
     "log_interactive_confusion_matrix": True,  # Use interactive report_confusion_matrix()
     "log_per_class_table": True,  # Log per-class metrics as DataFrame table
-    "log_interactive_pr_curves": True,  # Use interactive Plotly PR curves
+    "log_interactive_pr_curves": True,  # Plotly PR/F1/P/R-vs-conf curves, box and mask
     "log_confidence_histograms": True,  # Log confidence score distributions
     "log_learning_rate": True,  # Track learning rate per epoch
     "log_loss_components": True,  # Separate box, cls, dfl loss logging
     "log_speed_metrics": True,  # Log preprocess, inference, postprocess times
     "log_per_class_scatter": True,  # Log per-class metric scatter/bar plots
+    # Display threshold for the confusion matrix only, held independent of
+    # args_val["conf"]. Ultralytics feeds one value to both NMS and the matrix, but they
+    # want opposite things: metrics need a floor near zero, a readable matrix needs
+    # ~0.25 or it fills with low-confidence detections. Pinned in on_val_batch_start.
+    "confusion_matrix_conf": 0.25,
+    # --- per-epoch, cheap ---------------------------------------------------------
+    # mask mAP minus box mAP. Segmentation runs only; a no-op on a detect model.
+    "log_mask_box_gap": True,
+    # --- once per validation run, heavier -----------------------------------------
+    # F1-optimal confidence, global and per class. This is the threshold to deploy at,
+    # and it is none of the other three thresholds visible in the task (mAP uses 0.001,
+    # the confusion matrix 0.25/IoU-0.45, args_val["conf"] only filters validation).
+    "log_optimal_confidence": True,
+    # Worst-scoring validation images as a table, plus their GT/FP/TP/FN panels when
+    # args_val["visualize"] produced them. Ranked by mask F1 on a segmentation run.
+    "log_worst_images": True,
+    "worst_images_limit": 16,
+    # TP-vs-FP confidence split and the reliability diagram. Requires the
+    # on_val_batch_end capture, because ultralytics clears metrics.stats immediately
+    # after processing them.
+    "log_calibration": True,
 }

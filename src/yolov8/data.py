@@ -21,6 +21,7 @@ from src.data.setup import setup_dataset
 from src.schema.coco import Coco as CocoSchema
 from src.utils.general import read_json
 from src.utils.logging import get_logger
+from src.yolov8.dataset_report import report_dataset_composition
 
 
 logger = get_logger(__name__)
@@ -213,6 +214,10 @@ class DataHandler:
             if img_count or lbl_count:
                 counts.append(f"{split} {img_count:,} img / {lbl_count:,} lbl")
         logger.info("dataset ready: %s", ", ".join(counts))
+
+        # Once per data stage, after every source has been converted -- class balance and
+        # object geometry are properties of the whole dataset, not of one CVAT task.
+        report_dataset_composition()
 
     def export(self) -> str:
         """Prepare and export the dataset for YOLOv8 training.

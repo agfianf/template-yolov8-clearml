@@ -9,6 +9,7 @@ import numpy as np
 
 from src.schema.coco import Coco as CocoSchema
 from src.utils.logging import get_logger, progress
+from src.yolov8.dataset_report import dataset_stats
 
 
 logger = get_logger(__name__)
@@ -163,11 +164,15 @@ class Coco2Yolo:
         coco = CocoSchema(**coco_d)
 
         images = coco.get_imageid_to_image()
-        img_to_anns, _report = coco.get_imageid_to_annotations(
+        img_to_anns, report = coco.get_imageid_to_annotations(
             exclude_class=exclude_class,
             attributes_excluded=attributes_excluded,
             area_segment_min=area_segment_min,
         )
+        # This used to be discarded into `_report`. It is the only record of which
+        # annotations were dropped and why, which is exactly what someone looking at a
+        # class with suspiciously few instances needs.
+        dataset_stats.note_filter_report(report)
 
         # write labels in txt file
         cat_id2name = coco.get_categoryid_to_namecat(exclude_class=exclude_class)
@@ -180,6 +185,7 @@ class Coco2Yolo:
 
             bboxes = []
             segments = []
+            classes_in_image: set[str] = set()
 
             for ann in img_annotatins:
                 if ann.iscrowd:
@@ -197,6 +203,10 @@ class Coco2Yolo:
                 box = [cls] + box.tolist()
                 if box not in bboxes:
                     bboxes.append(box)
+                    # Tally only -- one call per annotation, so it must not log.
+                    class_name = cat_id2name.get(ann.category_id, f"class_{cls}")
+                    classes_in_image.add(class_name)
+                    dataset_stats.note_annotation(class_name, box[3], box[4])
 
                 if use_segments:
                     if len(ann.segmentation) > 1:
@@ -219,6 +229,8 @@ class Coco2Yolo:
                     s = [cls] + s
                     if s not in segments:
                         segments.append(s)
+
+            dataset_stats.note_image(classes_in_image)
 
             # Write for each images
             filename = os.path.basename(fp_image)

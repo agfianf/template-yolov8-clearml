@@ -139,6 +139,10 @@ def export_handler(
 
     requested = [fmt for fmt, is_use in args_export["format"].items() if is_use]
     succeeded = 0
+    # One row per requested format. Until now the size and duration of every export went
+    # to the console only, so choosing a deployment target meant reading back through the
+    # log rather than looking at the task.
+    rows: list[dict[str, Any]] = []
 
     for format_model in requested:
         started = time.monotonic()
@@ -164,12 +168,23 @@ def export_handler(
                 imgsz=args_training["imgsz"],
             )
             succeeded += 1
+            elapsed = time.monotonic() - started
+            size_mb = _size_mb(str(path_model))
             logger.info(
                 "export %s: ok in %.1fs -> %s (%.1f MB)",
                 format_model,
-                time.monotonic() - started,
+                elapsed,
                 os.path.basename(str(path_model).rstrip("/")),
-                _size_mb(str(path_model)),
+                size_mb,
+            )
+            rows.append(
+                {
+                    "Format": format_model,
+                    "Status": "ok",
+                    "Size (MB)": round(size_mb, 2),
+                    "Export time (s)": round(elapsed, 1),
+                    "Artifact": os.path.basename(str(path_model).rstrip("/")),
+                }
             )
 
         except Exception as e:
@@ -177,8 +192,41 @@ def export_handler(
             # warn rather than raising the alarm with a full traceback.
             if format_model == "engine" and not torch.cuda.is_available():
                 logger.warning("export engine: skipped, no CUDA device available (%s)", e)
+                status = "skipped (no CUDA)"
             else:
                 logger.exception("export %s: failed", format_model)
+                status = f"failed: {type(e).__name__}"
+            rows.append(
+                {
+                    "Format": format_model,
+                    "Status": status,
+                    "Size (MB)": 0.0,
+                    "Export time (s)": round(time.monotonic() - started, 1),
+                    "Artifact": "",
+                }
+            )
             continue
 
     logger.info("export: %d/%d formats ok", succeeded, len(requested))
+    _report_export_table(rows)
+
+
+def _report_export_table(rows: list[dict[str, Any]]) -> None:
+    """Report the per-format export outcome as a single ClearML table.
+
+    Failures are included as rows rather than omitted -- "engine is missing" is exactly
+    what someone reading this table needs to see, and an absent row is indistinguishable
+    from a format that was never requested.
+    """
+    if not rows:
+        return
+    try:
+        import pandas as pd
+
+        from src.yolov8.clearml_logger import YOLOClearMLLogger
+
+        YOLOClearMLLogger().log_dataframe_table(
+            pd.DataFrame(rows), title="Export", series="Formats"
+        )
+    except Exception as e:
+        logger.debug("could not report export table: %s", e)

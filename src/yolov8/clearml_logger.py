@@ -6,7 +6,7 @@ histograms, and scalar metrics.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -16,10 +16,28 @@ from src.utils.logging import get_logger
 
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from clearml import Task
 
 
 logger = get_logger(__name__)
+
+# Ultralytics suffixes curve names with the metric domain: "(B)" for box, "(M)" for
+# mask. See Metric.curves / SegmentMetrics.curves in ultralytics/utils/metrics.py.
+_CURVE_DOMAINS = {"(B)": "Box", "(M)": "Mask", "(P)": "Pose"}
+
+
+def _split_curve_name(name: str) -> tuple[str, str]:
+    """Split "Precision-Recall(B)" into ("Precision-Recall", "Box").
+
+    Falls back to ("<name>", "Box") for an unsuffixed name so a future ultralytics
+    rename degrades to a mislabelled series rather than a crash inside a callback.
+    """
+    for suffix, domain in _CURVE_DOMAINS.items():
+        if name.endswith(suffix):
+            return name[: -len(suffix)].strip(), domain
+    return name, "Box"
 
 
 class YOLOClearMLLogger:
@@ -177,18 +195,97 @@ class YOLOClearMLLogger:
             logger.warning("Failed to log confidence histogram: %s", e)
             return False
 
-    def log_pr_curve_plotly(
+    def log_curve_family(
         self,
-        pr_curves: list[dict],
+        curve: dict,
         iteration: int = 0,
-        title: str = "PR Curves",
-        series: str = "All Classes",
+        title_prefix: str = "Curves",
     ) -> bool:
-        """Log interactive PR curves using Plotly to ClearML.
+        """Log one per-class curve family (PR, F1-conf, P-conf or R-conf) as Plotly.
+
+        Takes a dict from ``extract_curve_data``. Ultralytics names the family with a
+        ``(B)`` / ``(M)`` suffix; we split that into the ClearML series so box and mask
+        land as two selectable variants of the same plot instead of eight unrelated
+        plots, or -- worse -- overlaid without saying which is which.
 
         Args:
-            pr_curves: List of dicts with keys: class_name, precision, recall, ap50.
+            curve: Dict with keys name, xlabel, ylabel, x, series.
             iteration: Iteration/epoch number.
+            title_prefix: Group prefix for the plot title.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None:
+            logger.warning("No ClearML task available for logging curves")
+            return False
+
+        if not curve or not curve.get("series"):
+            return False
+
+        raw_name = str(curve.get("name", "Curve"))
+        base, variant = _split_curve_name(raw_name)
+
+        try:
+            fig = go.Figure()
+            x = curve["x"]
+            for s in curve["series"]:
+                fig.add_trace(
+                    go.Scatter(
+                        x=x,
+                        y=s["y"],
+                        mode="lines",
+                        name=str(s["class_name"]),
+                        hovertemplate=(
+                            f"Class: {s['class_name']}<br>"
+                            f"{curve['xlabel']}: %{{x:.3f}}<br>"
+                            f"{curve['ylabel']}: %{{y:.3f}}<extra></extra>"
+                        ),
+                    )
+                )
+
+            fig.update_layout(
+                title=f"{base} ({variant})",
+                xaxis_title=curve["xlabel"],
+                yaxis_title=curve["ylabel"],
+                legend_title="Class",
+                hovermode="closest",
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1.05]),
+            )
+
+            task_logger.report_plotly(
+                title=f"{title_prefix}/{base}",
+                series=variant,
+                iteration=iteration,
+                figure=fig,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to log curve %s: %s", raw_name, e)
+            return False
+
+    def log_per_class_bar(
+        self,
+        metrics_df: pd.DataFrame,
+        iteration: int = 0,
+        sort_by: str = "Box-mAP50-95",
+        title: str = "Per-Class Performance",
+        series: str = "mAP50-95 (sorted)",
+    ) -> bool:
+        """Log a per-class mAP bar chart, sorted worst-first, box beside mask.
+
+        The sort is the point: it puts the classes you have to fix on the left, which an
+        alphabetical or class-index ordering buries. Mask bars are drawn alongside box
+        bars whenever the run is a segmentation run, so a class whose masks lag its boxes
+        is visible at a glance.
+
+        Args:
+            metrics_df: DataFrame from ``extract_per_class_metrics``.
+            iteration: Iteration/epoch number.
+            sort_by: Column to sort ascending by.
             title: Title for the plot.
             series: Series name.
 
@@ -198,50 +295,48 @@ class YOLOClearMLLogger:
         """
         task_logger = self._get_logger()
         if task_logger is None:
-            logger.warning("No ClearML task available for logging PR curves")
+            logger.warning("No ClearML task available for logging per-class bar")
             return False
 
-        if not pr_curves:
-            logger.warning("No PR curve data to log")
+        if metrics_df is None or metrics_df.empty or sort_by not in metrics_df.columns:
             return False
 
         try:
+            df = metrics_df.sort_values(by=sort_by, ascending=True, kind="stable")
             fig = go.Figure()
-
-            for curve in pr_curves:
+            for col, label in (
+                ("Box-mAP50-95", "Box"),
+                ("Mask-mAP50-95", "Mask"),
+            ):
+                if col not in df.columns:
+                    continue
                 fig.add_trace(
-                    go.Scatter(
-                        x=curve["recall"],
-                        y=curve["precision"],
-                        mode="lines",
-                        name=f"{curve['class_name']} (AP50={curve.get('ap50', 0):.3f})",
+                    go.Bar(
+                        x=df["Class"].astype(str).tolist(),
+                        y=df[col].tolist(),
+                        name=label,
+                        text=[f"{v:.3f}" for v in df[col]],
+                        textposition="outside",
                         hovertemplate=(
-                            f"Class: {curve['class_name']}<br>"
-                            "Recall: %{x:.3f}<br>"
-                            "Precision: %{y:.3f}<extra></extra>"
+                            f"%{{x}}<br>{label} mAP50-95: %{{y:.4f}}<extra></extra>"
                         ),
                     )
                 )
 
             fig.update_layout(
-                title="Precision-Recall Curves",
-                xaxis_title="Recall",
-                yaxis_title="Precision",
-                legend_title="Class (AP50)",
-                hovermode="closest",
-                xaxis=dict(range=[0, 1]),
+                title="mAP50-95 per Class (worst first)",
+                xaxis_title="Class",
+                yaxis_title="mAP50-95",
+                barmode="group",
                 yaxis=dict(range=[0, 1.05]),
             )
 
             task_logger.report_plotly(
-                title=title,
-                series=series,
-                iteration=iteration,
-                figure=fig,
+                title=title, series=series, iteration=iteration, figure=fig
             )
             return True
         except Exception as e:
-            logger.warning("Failed to log PR curves: %s", e)
+            logger.warning("Failed to log per-class bar: %s", e)
             return False
 
     def log_scalar_grouped(
@@ -310,6 +405,29 @@ class YOLOClearMLLogger:
             )
             return False
         return True
+
+    def log_scalar_group(
+        self,
+        title: str,
+        values: dict[str, float],
+        iteration: int,
+        what: str = "scalars",
+    ) -> bool:
+        """Report a named group of scalars, warning at most once for the whole group.
+
+        Args:
+            title: Group/category title.
+            values: Mapping of series name to value.
+            iteration: Iteration/epoch number.
+            what: Human-readable name of the group, used in the warning.
+
+        Returns:
+            True if every scalar was logged, False otherwise.
+
+        """
+        if not values:
+            return False
+        return self._log_scalar_batch(title, values, iteration, what)
 
     def log_per_class_scatter(
         self,
@@ -430,3 +548,361 @@ class YOLOClearMLLogger:
 
         """
         return self._log_scalar_batch(title, losses, iteration, "loss components")
+
+    def log_mask_box_gap(
+        self,
+        gap: dict[str, float],
+        iteration: int,
+        title: str = "Metrics/Mask-vs-Box",
+    ) -> bool:
+        """Log the mask-minus-box mAP gap for a segmentation run.
+
+        Args:
+            gap: Output of ``extract_mask_box_gap``.
+            iteration: Iteration/epoch number.
+            title: Title group for the scalars.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        if not gap:
+            return False
+        return self._log_scalar_batch(title, gap, iteration, "mask/box gap")
+
+    def log_optimal_confidence(
+        self,
+        optimal: dict[str, Any],
+        iteration: int = 0,
+        title: str = "Operating Point",
+    ) -> bool:
+        """Log the F1-optimal confidence threshold, globally and per class.
+
+        This is the threshold to deploy at, and it is none of the three thresholds
+        already visible elsewhere in the task: mAP is computed at conf=0.001, the
+        confusion matrix at conf=0.25/IoU=0.45, and ``args_val["conf"]`` is only what
+        validation filtered at. Reported as its own group so nobody has to guess which
+        number to ship.
+
+        Args:
+            optimal: Output of ``extract_optimal_confidence``.
+            iteration: Iteration/epoch number.
+            title: Title group.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or not optimal:
+            return False
+
+        ok = self._log_scalar_batch(
+            title,
+            {
+                "f1_optimal_confidence": float(optimal["global_conf"]),
+                "f1_at_optimal_confidence": float(optimal["global_f1"]),
+            },
+            iteration,
+            "optimal confidence",
+        )
+
+        per_class = optimal.get("per_class") or []
+        if not per_class:
+            return ok
+
+        try:
+            df = pd.DataFrame(per_class).rename(
+                columns={
+                    "class_name": "Class",
+                    "conf": "F1-optimal conf",
+                    "f1": "F1 at that conf",
+                }
+            )
+            task_logger.report_table(
+                title=title,
+                series="Per-Class Threshold",
+                iteration=iteration,
+                table_plot=df,
+            )
+        except Exception as e:
+            logger.warning("Failed to log per-class thresholds: %s", e)
+            return False
+        return ok
+
+    def log_worst_images_table(
+        self,
+        worst_df: pd.DataFrame,
+        iteration: int = 0,
+        title: str = "Error Analysis",
+    ) -> bool:
+        """Log the worst-scoring validation images as a table.
+
+        Args:
+            worst_df: Output of ``extract_worst_images``.
+            iteration: Iteration/epoch number.
+            title: Title group.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or worst_df is None or worst_df.empty:
+            return False
+
+        basis = worst_df.attrs.get("basis", "box")
+        try:
+            task_logger.report_table(
+                title=title,
+                series=f"Worst Images ({basis} F1)",
+                iteration=iteration,
+                table_plot=worst_df,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to log worst-images table: %s", e)
+            return False
+
+    def log_image_files(
+        self,
+        files: list[Path],
+        title: str = "Error Analysis",
+        series_prefix: str = "",
+        iteration: int = 0,
+    ) -> int:
+        """Report a bounded list of image files, returning how many were sent.
+
+        The series name is the *rank* only, deliberately excluding the filename.
+        ClearML's image retention (``sdk.metrics.file_history_size``) is applied per
+        title/series, so a stable series per rank gives each slot its own history that
+        can be scrubbed across iterations. Folding the filename in would mint a new
+        series every time a different image became the worst, defeating that.
+
+        Args:
+            files: Image paths to upload.
+            title: Title group.
+            series_prefix: Prefix for each image's series name.
+            iteration: Iteration number.
+
+        Returns:
+            Number of images successfully reported.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or not files:
+            return 0
+
+        sent = 0
+        failed = 0
+        for rank, path in enumerate(files):
+            try:
+                task_logger.report_image(
+                    title=title,
+                    series=f"{series_prefix}{rank:02d}",
+                    local_path=str(path),
+                    iteration=iteration,
+                )
+                sent += 1
+            except Exception:
+                failed += 1
+        # One summary line, not one per image: this loops over dataset items.
+        if failed:
+            logger.warning("failed to report %d/%d images", failed, len(files))
+        return sent
+
+    def log_confidence_split(
+        self,
+        split: dict[str, Any],
+        iteration: int = 0,
+        title: str = "Distributions",
+    ) -> bool:
+        """Log matched vs unmatched detection confidence as an overlaid histogram.
+
+        Answers a question the existing undifferentiated confidence histogram cannot: is
+        there any threshold that separates true from false detections? Two overlapping
+        humps mean no threshold will fix precision -- the model, or the labels, need work.
+
+        Args:
+            split: Output of ``ValStatsAccumulator.confidence_split``.
+            iteration: Iteration/epoch number.
+            title: Title group.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or not split:
+            return False
+
+        tp = np.asarray(split.get("tp", []), dtype=float)
+        fp = np.asarray(split.get("fp", []), dtype=float)
+        if tp.size == 0 and fp.size == 0:
+            return False
+
+        basis = split.get("basis", "box")
+        try:
+            fig = go.Figure()
+            for values, label in ((tp, "Matched (TP)"), (fp, "Unmatched (FP)")):
+                if values.size == 0:
+                    continue
+                fig.add_trace(
+                    go.Histogram(
+                        x=values.tolist(),
+                        name=label,
+                        opacity=0.65,
+                        xbins=dict(start=0.0, end=1.0, size=0.02),
+                    )
+                )
+            fig.update_layout(
+                title=f"Detection confidence, matched vs unmatched ({basis} IoU@0.50)",
+                xaxis_title="Confidence",
+                yaxis_title="Detections",
+                barmode="overlay",
+            )
+            task_logger.report_plotly(
+                title=title,
+                series="TP vs FP Confidence",
+                iteration=iteration,
+                figure=fig,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to log TP/FP confidence split: %s", e)
+            return False
+
+    def log_reliability_diagram(
+        self,
+        calibration: dict[str, Any],
+        iteration: int = 0,
+        title: str = "Calibration",
+    ) -> bool:
+        """Log a reliability diagram plus the calibration error scalar.
+
+        Args:
+            calibration: Output of ``extract_calibration_bins``.
+            iteration: Iteration/epoch number.
+            title: Title group.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or not calibration:
+            return False
+
+        basis = calibration.get("basis", "box")
+        try:
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=[0, 1],
+                    y=[0, 1],
+                    mode="lines",
+                    name="Perfect calibration",
+                    line=dict(dash="dash"),
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=calibration["mean_confidence"],
+                    y=calibration["precision"],
+                    mode="lines+markers",
+                    name="Observed",
+                    text=[f"n={c}" for c in calibration["count"]],
+                    hovertemplate=(
+                        "Confidence: %{x:.3f}<br>Precision: %{y:.3f}"
+                        "<br>%{text}<extra></extra>"
+                    ),
+                )
+            )
+            fig.update_layout(
+                title=(
+                    f"Reliability ({basis} IoU@0.50), ECE={calibration['ece']:.4f}"
+                    " - ignores false negatives, read with recall"
+                ),
+                xaxis_title="Mean predicted confidence",
+                yaxis_title="Observed precision",
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1.05]),
+            )
+            task_logger.report_plotly(
+                title=title,
+                series="Reliability Diagram",
+                iteration=iteration,
+                figure=fig,
+            )
+        except Exception as e:
+            logger.warning("Failed to log reliability diagram: %s", e)
+            return False
+
+        return self._log_scalar_batch(
+            title,
+            {"expected_calibration_error": float(calibration["ece"])},
+            iteration,
+            "calibration error",
+        )
+
+    def log_plotly_figure(
+        self,
+        figure: go.Figure,
+        title: str,
+        series: str,
+        iteration: int = 0,
+    ) -> bool:
+        """Report an already-built Plotly figure.
+
+        Args:
+            figure: The figure to report.
+            title: Title group.
+            series: Series name.
+            iteration: Iteration number.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or figure is None:
+            return False
+        try:
+            task_logger.report_plotly(
+                title=title, series=series, iteration=iteration, figure=figure
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to log figure %s/%s: %s", title, series, e)
+            return False
+
+    def log_dataframe_table(
+        self,
+        df: pd.DataFrame,
+        title: str,
+        series: str,
+        iteration: int = 0,
+    ) -> bool:
+        """Report any DataFrame as a ClearML table.
+
+        Args:
+            df: The table to report.
+            title: Title group.
+            series: Series name.
+            iteration: Iteration number.
+
+        Returns:
+            True if logged successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or df is None or df.empty:
+            return False
+        try:
+            task_logger.report_table(
+                title=title, series=series, iteration=iteration, table_plot=df
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to log table %s/%s: %s", title, series, e)
+            return False

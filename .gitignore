@@ -73,3 +73,6 @@ YOLO11/
 .venv
 .mypy_cache
 .vscode
+
+# Local-only agent instructions; deliberately untracked.
+CLAUDE.md
