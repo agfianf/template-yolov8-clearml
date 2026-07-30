@@ -11,8 +11,12 @@ import boto3.session
 import splitfolders
 
 from clearml import config as config_clearml
-
 from data.utils import mkdir_p
+
+from src.utils.logging import Tally, get_logger
+
+
+logger = get_logger(__name__)
 
 
 def download_object(s3_client, url_s3, save_dir):
@@ -35,7 +39,7 @@ def download_files_from_s3_multithreading(s3_paths, aws_access_key_id, aws_secre
 
     # Dispatch work tasks with our s3_client
     mkdir_p(save_dir)
-    print('start')
+    logger.debug("downloading %d objects to %s", len(s3_paths), save_dir)
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_key = {executor.submit(download_object, s3_client, url_s3, save_dir): url_s3 for url_s3 in s3_paths}
 
@@ -84,7 +88,7 @@ class HandlerS3:
 
         # Dispatch work tasks with our s3_client
         mkdir_p(self.tmp_dir)
-        print('start')
+        logger.debug("downloading %d objects to %s", len(s3_paths), self.tmp_dir)
         with ThreadPoolExecutor(max_workers=8) as executor:
             future_to_key = {executor.submit(self.download_object, s3_client, url_s3): url_s3 for url_s3 in s3_paths}
 
@@ -100,7 +104,7 @@ class HandlerS3:
     def extract_list(self, dir_s3_path:str):
         bucket_name = dir_s3_path.replace('s3://', '').split('/')[0]
         prefix = dir_s3_path.replace(f's3://{bucket_name}/', '')
-        print(bucket_name, prefix)
+        logger.debug("listing bucket=%s prefix=%s", bucket_name, prefix)
         s3_client = boto3.client('s3',
                             aws_access_key_id=self.aws_access_key_id,
                             aws_secret_access_key=self.aws_secret_access_key
@@ -116,9 +120,10 @@ class HandlerS3:
         # download from s3
         s3_paths = self.extract_list(dir_s3_path)
         start_time = time.time()
+        failures = Tally()
         for key, result in self.download_files_from_s3_multithreading(s3_paths):
             if result != True:
-                print('FAILED:', key, result)
+                failures.add("download failed", key)
         end_time = time.time() - start_time
 
         # splitting
@@ -132,13 +137,20 @@ class HandlerS3:
 
         # write yaml for yolo
         cls_names = os.listdir(os.path.join(self.output_dir, 'train'))
-        print(cls_names)
         with open(os.path.join(self.output_dir, 'data.yaml'), 'w') as f:
             f.write("train: train/\n")
             f.write("val: val/\n")
             f.write(f"nc: {len(cls_names)}\n")
             f.write(f"names: {cls_names}\n")
-        print(f'Done Download in {round(end_time, 3)} secs for {len(s3_paths)} images')
+        logger.info(
+            "s3: %d images in %.1fs, %d classes%s",
+            len(s3_paths),
+            end_time,
+            len(cls_names),
+            f"; {failures.total()} failed [{failures.summary(with_examples=True)}]"
+            if failures
+            else "",
+        )
         return self.output_dir
 
 if __name__ == '__main__':

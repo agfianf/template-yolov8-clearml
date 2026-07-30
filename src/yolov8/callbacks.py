@@ -72,32 +72,37 @@ def _log_plot(title, plot_path) -> None:
     """
     img = mpimg.imread(plot_path)
     fig = plt.figure()
-    ax = fig.add_axes(
-        [0, 0, 1, 1], frameon=False, aspect="auto", xticks=[], yticks=[]
-    )  # no ticks
-    ax.imshow(img)
+    try:
+        ax = fig.add_axes(
+            [0, 0, 1, 1], frameon=False, aspect="auto", xticks=[], yticks=[]
+        )  # no ticks
+        ax.imshow(img)
 
-    series = ""
-    if "confusion_matrix" in title:
-        series = title
-        title = "Confusion Matrix"
-    if "Mask" in title:
-        series = title
-        title = "Mask"
-    if "Box" in title:
-        series = title
-        title = "Box"
-    if "labels" in title:
-        series = title
-        title = "Labels"
+        series = ""
+        if "confusion_matrix" in title:
+            series = title
+            title = "Confusion Matrix"
+        if "Mask" in title:
+            series = title
+            title = "Mask"
+        if "Box" in title:
+            series = title
+            title = "Box"
+        if "labels" in title:
+            series = title
+            title = "Labels"
 
-    task: Task = Task.current_task()
-    task.get_logger().report_matplotlib_figure(
-        title=title,
-        series=series,
-        figure=fig,
-        report_interactive=False,
-    )
+        task: Task = Task.current_task()
+        task.get_logger().report_matplotlib_figure(
+            title=title,
+            series=series,
+            figure=fig,
+            report_interactive=False,
+        )
+    finally:
+        # pyplot keeps every figure alive until it is closed; this runs once per
+        # plot at the end of training.
+        plt.close(fig)
 
 
 def on_pretrain_routine_start(trainer: BaseTrainer):
@@ -360,7 +365,14 @@ def on_train_end(trainer: BaseTrainer):
             "format_model": "PyTorch",
             "data_yaml": data_yaml,
         }
-        logger.info("config_data: %s", config_data)
+        # data_yaml holds the full class list; keep it out of the INFO line.
+        logger.info(
+            "registering %s (%s, imgsz=%s) as best + last",
+            config_data["model_name"],
+            config_data["task_yolo"],
+            config_data["imgsz"],
+        )
+        logger.debug("config_data: %s", config_data)
 
         register_model_to_clearml(
             path_model=trainer.best,

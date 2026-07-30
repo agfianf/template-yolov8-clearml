@@ -276,8 +276,40 @@ class YOLOClearMLLogger:
             )
             return True
         except Exception as e:
-            logger.warning("Failed to log scalar %s/%s: %s", title, series, e)
+            # DEBUG, not WARNING: this is called once per scalar, so a sick
+            # ClearML connection produced eleven warnings per epoch. The batch
+            # helpers below warn once for the whole group instead.
+            logger.debug("Failed to log scalar %s/%s: %s", title, series, e)
             return False
+
+    def _log_scalar_batch(
+        self,
+        title: str,
+        values: dict[str, float],
+        iteration: int,
+        what: str,
+    ) -> bool:
+        """Report a group of scalars and warn at most once for the group."""
+        task_logger = self._get_logger()
+        if task_logger is None:
+            return False
+
+        failed = [
+            name
+            for name, value in values.items()
+            if not self.log_scalar_grouped(title, name, value, iteration)
+        ]
+        if failed:
+            logger.warning(
+                "Failed to log %d/%d %s at iteration %s: %s",
+                len(failed),
+                len(values),
+                what,
+                iteration,
+                ", ".join(failed),
+            )
+            return False
+        return True
 
     def log_per_class_scatter(
         self,
@@ -359,16 +391,7 @@ class YOLOClearMLLogger:
             True if logged successfully, False otherwise.
 
         """
-        task_logger = self._get_logger()
-        if task_logger is None:
-            return False
-
-        success = True
-        for metric_name, value in speeds.items():
-            if not self.log_scalar_grouped(title, metric_name, value, iteration):
-                success = False
-
-        return success
+        return self._log_scalar_batch(title, speeds, iteration, "speed metrics")
 
     def log_learning_rates(
         self,
@@ -387,16 +410,7 @@ class YOLOClearMLLogger:
             True if logged successfully, False otherwise.
 
         """
-        task_logger = self._get_logger()
-        if task_logger is None:
-            return False
-
-        success = True
-        for group_name, lr_value in learning_rates.items():
-            if not self.log_scalar_grouped(title, group_name, lr_value, iteration):
-                success = False
-
-        return success
+        return self._log_scalar_batch(title, learning_rates, iteration, "learning rates")
 
     def log_loss_components(
         self,
@@ -415,13 +429,4 @@ class YOLOClearMLLogger:
             True if logged successfully, False otherwise.
 
         """
-        task_logger = self._get_logger()
-        if task_logger is None:
-            return False
-
-        success = True
-        for loss_name, value in losses.items():
-            if not self.log_scalar_grouped(title, loss_name, value, iteration):
-                success = False
-
-        return success
+        return self._log_scalar_batch(title, losses, iteration, "loss components")

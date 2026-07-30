@@ -1,4 +1,5 @@
 import glob
+import logging
 import os
 import random
 
@@ -12,9 +13,10 @@ from ultralytics import YOLO
 from src.config import settings  # noqa: F401
 from src.data.setup import cleanup_cache
 from src.initizalization import init_ultralytics_settings
+from src.params import args_console
 from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
-from src.utils.logging import get_logger
+from src.utils.logging import get_logger, resolve_level, set_log_level, set_progress_mode
 from src.yolov8.callbacks import callbacks
 from src.yolov8.clearml_logger import YOLOClearMLLogger
 from src.yolov8.data import DataHandler
@@ -23,6 +25,18 @@ from src.yolov8.metrics_utils import collect_prediction_confidences
 
 
 logger = get_logger(__name__)
+
+
+def _apply_console_verbosity(args_val: dict, args_predict: dict) -> None:
+    """Hand ultralytics' own per-item output back at DEBUG.
+
+    Both defaults are `verbose: False` -- roughly 50 lines of per-class val
+    output and per-image predict output whose content is already in ClearML.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    args_val["verbose"] = True
+    args_predict["model"]["verbose"] = True
 
 
 def _tagging_handler(task: Task, task_yolo: str, model_name: str, handler: DataHandler):
@@ -88,8 +102,9 @@ def _predicting_result(
         return
 
     logger.info(
-        "image_paths: %s, exists: %s", image_paths[0:5], os.path.exists(image_paths[0])
+        "predicting on %d images from %s", len(image_paths), os.path.basename(path_test)
     )
+    logger.debug("image_paths: %s", image_paths[0:5])
 
     # Get class names for confidence logging
     class_names = datadotyaml.get("names", [])
@@ -198,6 +213,14 @@ def main():
         args_visualization,
     ) = config_clearml()
 
+    # From here on the ClearML UI wins over $LOG_LEVEL. Everything logged above --
+    # init_clearml(), imports -- only ever follows the env var. And because
+    # execute_remotely() kills the local process on the next line, a value set in
+    # the UI only ever takes effect on the agent, which is the console that matters.
+    set_log_level(resolve_level(args_console["log_level"] or None))
+    set_progress_mode(args_console["progress"])
+    _apply_console_verbosity(args_val, args_predict)
+
     task.execute_remotely()
 
     # Set Task Name
@@ -217,7 +240,12 @@ def main():
     datadotyaml = yaml_loader(data_yaml_file)
     class_2_idx = {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
     task.set_model_label_enumeration(class_2_idx)
-    logger.info("datadotyaml: %s, class_2_idx: %s", datadotyaml, class_2_idx)
+    logger.info(
+        "data.yaml: %d classes, splits %s",
+        len(class_2_idx),
+        "/".join(k for k in ("train", "val", "test") if datadotyaml.get(k)),
+    )
+    logger.debug("datadotyaml: %s, class_2_idx: %s", datadotyaml, class_2_idx)
 
     logger.info("[Training]")
     logger.info("LOAD MODEL: %s, task: %s", model_name, task_yolo)

@@ -4,7 +4,26 @@ import shutil
 
 from pathlib import Path
 
-from tqdm import tqdm
+from src.utils.logging import get_logger, progress
+
+
+logger = get_logger(__name__)
+
+# How many filenames to show when a split fails its checks. Enough to recognise
+# the problem, not the whole listing -- these directories hold thousands.
+MAX_EXAMPLE_FILES = 5
+
+
+def _sample(dir_path: str) -> str:
+    """Return a few filenames from `dir_path`, for error messages."""
+    try:
+        names = sorted(os.listdir(dir_path))
+    except OSError:
+        return "<unreadable>"
+    shown = ", ".join(names[:MAX_EXAMPLE_FILES]) or "<empty>"
+    if len(names) > MAX_EXAMPLE_FILES:
+        shown += f", ... (+{len(names) - MAX_EXAMPLE_FILES})"
+    return shown
 
 
 def creating_yaml_file(source_dir, labels: list = None):
@@ -16,8 +35,7 @@ def creating_yaml_file(source_dir, labels: list = None):
     if labels is None:
         fp_label_txt = os.path.join(source_dir, "classes.txt")
         if not os.path.exists(fp_label_txt):
-            print(f"yaml_path: {fp_label_txt}")
-            raise Exception("[Creating YAML] classes.txt not found")
+            raise Exception(f"[Creating YAML] classes.txt not found: {fp_label_txt}")
         with open(fp_label_txt) as f:
             labels = f.readlines()
             labels = [line.strip() for line in labels]
@@ -37,35 +55,37 @@ def creating_yaml_file(source_dir, labels: list = None):
 
         # checkhing
         is_dir_exist = os.path.exists(dir_img) and os.path.exists(dir_labels)
-        is_have_files = len(os.listdir(dir_img)) > 0 and len(os.listdir(dir_labels)) > 0
-        is_exact_count = len(os.listdir(dir_img)) == len(os.listdir(dir_labels))
+        count_img = len(os.listdir(dir_img)) if is_dir_exist else 0
+        count_labels = len(os.listdir(dir_labels)) if is_dir_exist else 0
+        is_have_files = count_img > 0 and count_labels > 0
+        is_exact_count = count_img == count_labels
 
         is_passed = is_dir_exist and is_have_files and is_exact_count
 
         if dir == "test":
             if is_passed:
                 use_test = True
-        else:
-            if not is_passed:
-                print
-                print(f"yaml_path: {out_fp_yaml}")
-                print(f"""
-                {dir_img}
-                {dir_labels}
-                {os.listdir(dir_img)}
-                {os.listdir(dir_labels)}
-                      
-                is_dir_exist:{is_dir_exist}
-                is_have_files:{is_have_files}
-                is_exact_count:{is_exact_count}
-
-
-                """)
-                raise Exception(f"""[Creating YAML] {dir} folder is not valid. 
-                                is_dir_exist:{is_dir_exist}
-                                is_have_files:{is_have_files}
-                                is_exact_count:{is_exact_count}
-                                """)
+        elif not is_passed:
+            # Counts and a handful of names. The previous version interpolated
+            # two full os.listdir() results into one f-string.
+            logger.error(
+                'split "%s" invalid: images=%d labels=%d'
+                " (dir_exist=%s non_empty=%s counts_match=%s); images: %s; labels: %s",
+                dir,
+                count_img,
+                count_labels,
+                is_dir_exist,
+                is_have_files,
+                is_exact_count,
+                _sample(dir_img),
+                _sample(dir_labels),
+            )
+            raise Exception(
+                f"[Creating YAML] {dir} folder is not valid."
+                f" images={count_img} labels={count_labels}"
+                f" is_dir_exist={is_dir_exist} is_have_files={is_have_files}"
+                f" is_exact_count={is_exact_count}"
+            )
 
     with open(out_fp_yaml, "w") as f:
         f.write("train: train/images\n")
@@ -74,6 +94,11 @@ def creating_yaml_file(source_dir, labels: list = None):
             f.write("test: test/images\n\n")
         f.write(f"nc: {len(labels)}\n")
         f.write(f"names: {[name for name in labels]}")
+    logger.info(
+        "data.yaml: %d classes, splits %s",
+        len(labels),
+        "/".join(["train", "valid", *(["test"] if use_test else [])]),
+    )
     return out_fp_yaml
 
 
@@ -142,21 +167,35 @@ def split_folder_yolo(source_dir, train_ratio=0.8, valid_ratio=0.2, test_ratio=N
         ls_files.append(ls_test)
 
     # Copy images and labels to the corresponding sets
-    for list_files, dst_dir in zip(ls_files, ls_dirs, strict=False):
-        for src_fp_image, src_fp_label in tqdm(list_files, desc="Splitting files"):
-            dst_fp_image = os.path.join(dst_dir, "images", os.path.basename(src_fp_image))
-            dst_fp_label = os.path.join(dst_dir, "labels", os.path.basename(src_fp_label))
-            shutil.move(src_fp_image, dst_fp_image)
-            shutil.move(src_fp_label, dst_fp_label)
+    moves = [
+        (src_fp_image, src_fp_label, dst_dir)
+        for list_files, dst_dir in zip(ls_files, ls_dirs, strict=False)
+        for src_fp_image, src_fp_label in list_files
+    ]
+    for src_fp_image, src_fp_label, dst_dir in progress(
+        moves, desc="splitting files", logger=logger
+    ):
+        dst_fp_image = os.path.join(dst_dir, "images", os.path.basename(src_fp_image))
+        dst_fp_label = os.path.join(dst_dir, "labels", os.path.basename(src_fp_label))
+        shutil.move(src_fp_image, dst_fp_image)
+        shutil.move(src_fp_label, dst_fp_label)
 
     shutil.rmtree(src_dir_images)
     shutil.rmtree(src_dir_labels)
 
+    logger.info(
+        "split: %s pairs -> %s",
+        f"{total_files:,}",
+        " / ".join(
+            f"{os.path.basename(d)} {len(files):,}"
+            for files, d in zip(ls_files, ls_dirs, strict=False)
+        ),
+    )
+
 
 def creating_classes_txt(dataset_dir, label_names):
     with open(os.path.join(dataset_dir, "classes.txt"), "w") as file:
-        for cls_name in label_names:
-            file.write(cls_name + "\n")
+        file.writelines(cls_name + "\n" for cls_name in label_names)
 
 
 def setup_dataset(
@@ -200,7 +239,7 @@ def cleanup_cache(dataset_dir):
     for section in ["train", "valid", "test"]:
         path_cache = os.path.join(dataset_dir, section, "labels.cache")
         if os.path.exists(path_cache):
-            print(f"Removing {path_cache}")
+            logger.debug("removing %s", path_cache)
             os.remove(path_cache)
 
 

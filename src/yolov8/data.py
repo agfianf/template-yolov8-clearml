@@ -11,8 +11,6 @@ import shutil
 
 from typing import Any
 
-from rich import print
-
 from src.data.converter.coco2yolo import (
     Coco2Yolo,
     count_files_in_directory,
@@ -22,6 +20,10 @@ from src.data.downloader.method.cvat import CVATHTTPDownloaderV1, CVATHTTPDownlo
 from src.data.setup import setup_dataset
 from src.schema.coco import Coco as CocoSchema
 from src.utils.general import read_json
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class DataHandler:
@@ -127,10 +129,10 @@ class DataHandler:
         is_server1, _ = CVATHTTPDownloaderV1().get_about_server()
         is_server2, _ = CVATHTTPDownloaderV2().get_about_server()
         if is_server1:
-            print("[bold green]CVAT Server V1 detected[/bold green]")
+            logger.info("cvat: server V1 detected, %d train task(s)", len(task_id_train))
             cvat_http = CVATHTTPDownloaderV1()
         elif is_server2:
-            print("[bold green]CVAT Server V2 detected[/bold green]")
+            logger.info("cvat: server V2 detected, %d train task(s)", len(task_id_train))
             cvat_http = CVATHTTPDownloaderV2()
         else:
             raise ValueError("CVAT Server not found")
@@ -140,12 +142,16 @@ class DataHandler:
             task_ids=task_id_train,
             annotations_only=False,
         ):
-            print(f"\n📁 [cyan]Dataset[/cyan] {project_dir} 📁")
             ann_train_val = os.path.join(
                 project_dir, "annotations", "instances_default.json"
             )
             annotation_type = self._get_annotation_type(ann_train_val)
-            print(f"annotation_type: {annotation_type}, task_model: {self.task_model}")
+            logger.debug(
+                "%s: annotation_type=%s, task_model=%s",
+                project_dir,
+                annotation_type,
+                self.task_model,
+            )
             use_segments = (
                 "segmentation" in annotation_type and self.task_model != "detect"
             )
@@ -173,8 +179,13 @@ class DataHandler:
         else:
             self.dataset_test_dir = None
 
-        print(f"\n🧮 [yellow]TOTAL COUNT IMAGES[/yellow]: {total_count_files}")
-        print(f"label_names: {label_names}")
+        logger.info(
+            "cvat: %s images collected across %d task(s), %d classes",
+            f"{total_count_files:,}",
+            len(task_id_train) + len(task_id_test or []),
+            len(label_names),
+        )
+        logger.debug("label_names: %s", label_names)
         self._finalize_dataset(label_names)
 
     def _finalize_dataset(self, label_names: list[str]):
@@ -194,14 +205,14 @@ class DataHandler:
             valid_ratio=self.config["params"]["val_ratio"],
             test_ratio=self.config["params"].get("test_ratio"),
         )
+        counts = []
         for split in ["train", "valid", "test"]:
             dir_path = os.path.join(self.dataset_dir, split)
             img_count = count_files_in_directory(dir_path, extensions=image_extensions)
             lbl_count = count_files_in_directory(dir_path, extensions=["txt"])
-            print(
-                f"🧮 [{split.capitalize()}] TOTAL COUNT IMAGES: {img_count}"
-                f" | TOTAL COUNT LABELS: {lbl_count}"
-            )
+            if img_count or lbl_count:
+                counts.append(f"{split} {img_count:,} img / {lbl_count:,} lbl")
+        logger.info("dataset ready: %s", ", ".join(counts))
 
     def export(self) -> str:
         """Prepare and export the dataset for YOLOv8 training.
@@ -213,11 +224,11 @@ class DataHandler:
 
         """
         if self.source_type == "s3":
-            print("[yellow]S3 source not implemented yet.[/yellow]")
+            logger.warning("S3 source not implemented yet")
         elif self.source_type == "cvat":
             self._handle_cvat()
         elif self.source_type == "label_studio":
-            print("[yellow]Label Studio source not implemented yet.[/yellow]")
+            logger.warning("Label Studio source not implemented yet")
         else:
             raise ValueError(
                 "Cek config datanya pak. source must be s3, cvat or label_studio"
@@ -226,8 +237,6 @@ class DataHandler:
 
 
 if __name__ == "__main__":
-    from rich import print
-
     from schema.params import (  # noqa: F401
         args_augment,
         args_data,
