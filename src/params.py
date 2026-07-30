@@ -3,18 +3,44 @@
 
 import os
 
+from pathlib import Path
+
+
+# Stdlib only, deliberately: the Makefile imports this module with bare python3 to
+# read DOCKER_IMAGE back out, so it must work with no virtualenv.
+
+# ./VERSION is the one place the version is written. It is deliberately not in
+# pyproject.toml: that file is bind-mounted into the Dockerfile's `uv sync` layer,
+# so a version string there makes every bump re-install ~8GB of dependencies.
+VERSION_FILE = Path(__file__).resolve().parents[1] / "VERSION"
+
+
+def _read_version() -> str:
+    """Read ./VERSION, or "unknown" if it is missing or empty.
+
+    "unknown" is chosen to fail loudly: `yolo-trainer:unknown` is not a tag that
+    exists anywhere, so the agent's pull fails with an obvious message instead of
+    a task quietly running on whatever image happened to be lying around.
+    """
+    try:
+        return VERSION_FILE.read_text().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+VERSION = _read_version()
 
 # Single source of truth for the training image. The Makefile reads this constant
 # rather than declaring its own copy, and set_base_docker() stamps it onto every
 # task, so `make build` and what the agents pull can never drift apart.
 #
-# The tag mirrors `version` in pyproject.toml. Bump both together; never re-tag a
-# version that agents have already pulled, because a ClearML task stores the tag it
-# was created with and will keep requesting it forever.
+# Never re-tag a version that agents have already pulled: a ClearML task stores the
+# tag it was created with and will keep requesting it forever. Bump ./VERSION
+# (`make bump PART=patch`) before any build that changes the image contents.
 #
 # TRAINER_IMAGE overrides it -- point it at a registry path to run agents off a
-# pushed image, e.g. TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.0.
-DOCKER_IMAGE = os.getenv("TRAINER_IMAGE", "yolo-trainer:0.2.1")
+# pushed image, e.g. TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.2.
+DOCKER_IMAGE = os.getenv("TRAINER_IMAGE", f"yolo-trainer:{VERSION}")
 
 # Passed to every containerised run. The two SKIP_* flags are what make the image's
 # baked venv authoritative: without them the agent ignores /workspace/.venv and

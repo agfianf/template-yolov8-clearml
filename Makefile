@@ -1,10 +1,17 @@
 # The image reference is defined once, in src/params.py, and read back here -- so
 # `make build` and the set_base_docker() call that every task inherits can never name
-# different images. Override for a registry:
-#   make build push TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.0
+# different images. src/params.py takes the tag from ./VERSION. Override for a registry:
+#   make build push TRAINER_IMAGE=ghcr.io/acme/yolo-trainer:0.2.2
 # src/params.py imports nothing outside the stdlib, so this needs no venv.
 IMAGE_NAME := $(shell PYTHONPATH=. python3 -c "from src.params import DOCKER_IMAGE; print(DOCKER_IMAGE)")
 IMAGE_VERSION := $(lastword $(subst :, ,$(IMAGE_NAME)))
+
+# Semantic version bump. Bump before any build whose image contents changed: a
+# published tag must never be rebuilt, because every task that ran on it keeps
+# requesting that exact tag.
+#   make bump             -> 0.2.2 -> 0.2.3
+#   make bump PART=minor  -> 0.2.2 -> 0.3.0
+PART ?= patch
 
 # ClearML Agent variables
 TASK_ID ?=
@@ -14,6 +21,18 @@ QUEUE ?= default
 # before spending a build on it.
 image-name:
 	@echo $(IMAGE_NAME)
+
+bump:
+	@PART=$(PART) python3 -c "import os, pathlib, sys; \
+	part = os.environ['PART']; \
+	sys.exit('PART must be major, minor or patch (got %r)' % part) if part not in ('major', 'minor', 'patch') else None; \
+	f = pathlib.Path('VERSION'); \
+	old = f.read_text().strip(); \
+	n = [int(x) for x in old.split('.')]; \
+	sys.exit('VERSION must be MAJOR.MINOR.PATCH (got %r)' % old) if len(n) != 3 else None; \
+	new = {'major': (n[0] + 1, 0, 0), 'minor': (n[0], n[1] + 1, 0), 'patch': (n[0], n[1], n[2] + 1)}[part]; \
+	f.write_text('.'.join(map(str, new)) + chr(10)); \
+	print('%s -> %s' % (old, '.'.join(map(str, new))))"
 
 run:
 	PYTHONPATH=. uv run src/train.py

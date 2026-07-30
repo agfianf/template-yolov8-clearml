@@ -1,9 +1,14 @@
 [project]
 name = "template-yolov8"
-# Doubles as the training image tag -- see DOCKER_IMAGE in src/params.py. Bump this
-# whenever the image contents change, and never re-tag a published version: existing
-# ClearML tasks pin the tag they were created with.
-version = "0.2.1"
+# The version lives in ./VERSION, not here, and is declared dynamic so it never
+# appears in this file or in uv.lock.
+#
+# The Dockerfile bind-mounts exactly these two files into its `uv sync` layer, and
+# BuildKit keys that layer -- ~8GB of dependency installation -- on their contents.
+# A version string here therefore puts a full torch reinstall behind every release.
+# Nothing consumes the metadata version anyway: this is a virtual project, never
+# built and never published.
+dynamic = ["version"]
 description = "YOLO training template with ClearML tracking and remote execution"
 readme = "README.md"
 # Upper bound is deliberate. torch publishes one cp<minor> wheel set per release;

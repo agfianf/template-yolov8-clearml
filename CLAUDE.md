@@ -36,6 +36,7 @@ uv run ruff format          # Format code
 
 # Docker
 make image-name             # Print the resolved image reference
+make bump                   # ./VERSION 0.2.2 -> 0.2.3 (PART=minor|major for the rest)
 make build                  # Build the training image (yolo-trainer:<version>)
 make run-docker             # Run in Docker with GPU
 make push                   # Only meaningful with a registry path (see below)
@@ -89,8 +90,10 @@ YOLO Training
 - **src/params.py**: Default parameters for all pipeline stages, plus `DOCKER_IMAGE` /
   `DOCKER_ARGUMENTS` — the single source of truth for the training image. The Makefile
   reads `DOCKER_IMAGE` back out, so `make build` and `set_base_docker()` cannot drift.
-  Override with `TRAINER_IMAGE=...`; keep the tag in step with `version` in
-  `pyproject.toml`.
+  Override with `TRAINER_IMAGE=...`.
+- **VERSION**: the image tag, and the only place the version is written.
+  `make bump PART=patch|minor|major` before any build whose image contents changed.
+  It is deliberately *not* in `pyproject.toml` — see the Versioning note below.
 - **src/config.py**: Environment variables via Pydantic Settings (CVAT credentials, etc.)
 - Parameters can be overridden in ClearML UI after first run — except
   `clearml_project` / `clearml_task_name`, which are read before `Task.connect()` and
@@ -166,8 +169,22 @@ what makes that a one-command check.
   fails when that stops being true.
 - **Never re-tag a published image version.** A ClearML task stores the image tag it was
   created with and keeps requesting it, so overwriting `yolo-trainer:0.2.0` silently
-  changes what every past task reruns on. Bump `version` in `pyproject.toml` and the tag
-  in `DOCKER_IMAGE` together instead.
+  changes what every past task reruns on. `make bump PART=patch` instead — it edits
+  `./VERSION`, which `src/params.py` turns into the tag.
+- **Anything that varies per release goes at the *bottom* of the Dockerfile.** A changed
+  `--build-arg` invalidates every instruction below the one that consumes it, and
+  `IMAGE_VERSION` feeds a `LABEL`. With that block at the top, a version bump alone
+  rebuilt `apt-get` (71s) and `uv sync` (352s): **495s for a five-byte change**. Moving
+  the `ARG`/`LABEL` below the `COPY` steps took the same bump to **4s**. Both numbers
+  measured on this repo; the control was holding `IMAGE_VERSION` fixed and changing only
+  the image name, which built in 2.5s fully cached.
+- **Keep the version out of `pyproject.toml` and `uv.lock`.** Those two are bind-mounted
+  into the `uv sync` layer, and BuildKit keys that layer on their contents — a one-line
+  change to a bind-mounted file does invalidate the `RUN` (verified in isolation). This
+  was masked by the `ARG` problem above rather than being the cause of it, but it is a
+  live trap once that is fixed. `pyproject.toml` declares `dynamic = ["version"]`, which
+  uv accepts for a virtual project — which this is, nothing ever builds or publishes it —
+  and `tests/utils/test_version.py` fails if a static version returns to either file.
 - **Python 3.14 defaults `multiprocessing` to `forkserver` on Linux**, not `fork`.
   Forkserver re-imports the `__main__` module in every dataloader worker, so anything
   that runs at module scope in `src/train.py` would re-run per worker — re-initialising
