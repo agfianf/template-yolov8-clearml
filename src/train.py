@@ -240,12 +240,14 @@ def main():
     datadotyaml = yaml_loader(data_yaml_file)
     class_2_idx = {cls_name: idx for idx, cls_name in enumerate(datadotyaml["names"])}
     task.set_model_label_enumeration(class_2_idx)
-    logger.info(
-        "data.yaml: %d classes, splits %s",
+    # creating_yaml_file() already logs the same summary at the point the file is
+    # written; repeating it here just doubled the line on every run.
+    logger.debug(
+        "data.yaml: %d classes, splits %s -- %s",
         len(class_2_idx),
         "/".join(k for k in ("train", "val", "test") if datadotyaml.get(k)),
+        class_2_idx,
     )
-    logger.debug("datadotyaml: %s, class_2_idx: %s", datadotyaml, class_2_idx)
 
     logger.info("[Training]")
     logger.info("LOAD MODEL: %s, task: %s", model_name, task_yolo)
