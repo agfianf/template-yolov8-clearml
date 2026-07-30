@@ -18,6 +18,23 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Ultralytics computes every curve over 1000 x-points, per class. That is 1000 * n_classes
+# floats per curve family, and there are four families per domain -- eight on a
+# segmentation run. At 80 classes the payload runs to megabytes, which the ClearML UI
+# renders as a blank panel rather than an error. 250 points is visually indistinguishable
+# for a monotone-ish curve and keeps the payload flat.
+MAX_CURVE_POINTS = 250
+
+
+def _downsample(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Evenly thin a curve to MAX_CURVE_POINTS, always keeping both endpoints."""
+    n = x.shape[0]
+    if n <= MAX_CURVE_POINTS:
+        return x, y
+    idx = np.linspace(0, n - 1, MAX_CURVE_POINTS).round().astype(int)
+    idx = np.unique(idx)
+    return x[idx], y[:, idx]
+
 
 def _get_metrics(validator: BaseValidator):
     """Return the validator's metrics object, or None when it is unusable."""
@@ -294,7 +311,10 @@ def extract_curve_data(
             continue
         x, y, xlabel, ylabel = entry
         y_arr = np.atleast_2d(np.asarray(y, dtype=float))
-        x_list = np.asarray(x, dtype=float).tolist()
+        x_arr = np.asarray(x, dtype=float)
+        if x_arr.shape[0] == y_arr.shape[1]:
+            x_arr, y_arr = _downsample(x_arr, y_arr)
+        x_list = x_arr.tolist()
 
         series = [
             {

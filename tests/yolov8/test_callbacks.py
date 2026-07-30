@@ -518,3 +518,119 @@ class TestLossRatios:
         cb._report_loss_ratios(logger, {"box_loss": 2.0, "total_loss": 6.0}, iteration=1)
 
         task.get_logger.return_value.report_scalar.assert_not_called()
+
+
+class TestValidatorRef:
+    """A standalone `val()` needs the validator, and ultralytics does not expose it.
+
+    `Model.val()` constructs its validator locally and returns only `validator.metrics`
+    (engine/model.py:625-627). There is no `model.validator`; that attribute resolves
+    through `Model.__getattr__` to the underlying nn.Module and raises AttributeError.
+    src/train.py briefly relied on it, which -- inside its try/except -- would have
+    silently skipped all final-split reporting in production.
+    """
+
+    @pytest.mark.usefixtures("task")
+    def test_on_val_end_captures_the_validator(self, tmp_path):
+        """The hook is handed the validator, so it is the reliable capture point."""
+        cb.validator_ref.current = None
+        validator = SimpleNamespace(save_dir=tmp_path)
+
+        cb.on_val_end(validator)
+
+        assert cb.validator_ref.current is validator
+
+    def test_captured_even_without_a_clearml_task(self, tmp_path):
+        """Capture must not depend on reporting being active."""
+        cb.validator_ref.current = None
+        validator = SimpleNamespace(save_dir=tmp_path)
+
+        with patch.object(cb, "Task") as task_cls:
+            task_cls.current_task.return_value = None
+            cb.on_val_end(validator)
+
+        assert cb.validator_ref.current is validator
+
+    @pytest.mark.usefixtures("task")
+    def test_latest_validator_wins(self, tmp_path):
+        """Training validates every epoch; the standalone val() must be the one kept."""
+        first = SimpleNamespace(save_dir=tmp_path)
+        last = SimpleNamespace(save_dir=tmp_path)
+
+        cb.on_val_end(first)
+        cb.on_val_end(last)
+
+        assert cb.validator_ref.current is last
+
+    def test_ultralytics_model_really_has_no_validator_attribute(self):
+        """Pin the upstream fact this works around, against the real class."""
+        from ultralytics.engine.model import Model
+
+        assert not hasattr(Model, "validator")
+        # ...and it is not assigned during val() either.
+        import inspect
+
+        assert "self.validator" not in inspect.getsource(Model.val)
+
+
+class TestStaticPlotUploads:
+    """Static PNGs are only worth uploading when nothing interactive replaces them."""
+
+    ALL_ULTRALYTICS_PLOTS = [
+        "results.png",
+        "labels.jpg",
+        "labels_correlogram.jpg",
+        "confusion_matrix.png",
+        "confusion_matrix_normalized.png",
+        "BoxF1_curve.png",
+        "BoxPR_curve.png",
+        "BoxP_curve.png",
+        "BoxR_curve.png",
+        "MaskPR_curve.png",
+    ]
+
+    def _run(self, trainer):
+        for name in self.ALL_ULTRALYTICS_PLOTS:
+            (trainer.save_dir / name).write_bytes(b"x")
+        with (
+            patch.object(cb, "_log_plot") as log_plot,
+            patch.object(cb, "register_model_to_clearml"),
+            patch.object(cb, "report_validation_analysis"),
+            patch.object(cb, "yaml_loader", return_value={"names": ["a"]}),
+            patch.object(
+                cb, "extract_confusion_matrix_data", return_value=(None, [], None)
+            ),
+        ):
+            trainer.best = trainer.save_dir / "best.pt"
+            trainer.last = trainer.save_dir / "last.pt"
+            cb.on_train_end(trainer)
+        return [c[1]["title"] for c in log_plot.call_args_list]
+
+    @pytest.mark.usefixtures("task")
+    def test_duplicated_plots_are_not_uploaded(self, trainer):
+        """Curves and confusion matrices already exist as interactive plots.
+
+        Uploading them again produced a second, non-interactive copy of the same data --
+        and those copies are exactly the panels that render blank when the ClearML
+        fileserver cannot serve images, because report_matplotlib_figure uploads a PNG and
+        references it by URL.
+        """
+        titles = self._run(trainer)
+
+        assert not [t for t in titles if "curve" in t]
+        assert not [t for t in titles if "confusion_matrix" in t]
+
+    @pytest.mark.usefixtures("task")
+    def test_unduplicated_plots_are_still_uploaded(self, trainer):
+        """results/labels have no interactive equivalent, so they stay."""
+        titles = self._run(trainer)
+
+        assert set(titles) == {"results", "labels", "labels_correlogram"}
+
+    @pytest.mark.usefixtures("task")
+    def test_flag_disables_static_uploads_entirely(self, trainer):
+        """One switch for deployments whose fileserver cannot serve images."""
+        with patch.dict(cb.args_visualization, {"log_static_plots": False}):
+            titles = self._run(trainer)
+
+        assert titles == []

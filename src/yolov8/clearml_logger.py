@@ -28,6 +28,35 @@ logger = get_logger(__name__)
 _CURVE_DOMAINS = {"(B)": "Box", "(M)": "Mask", "(P)": "Pose"}
 
 
+def binned_counts(
+    values: np.ndarray,
+    bins: int = 50,
+    lo: float | None = None,
+    hi: float | None = None,
+) -> tuple[list[float], list[int], float]:
+    """Bin values into counts, returning (bin_centers, counts, bin_width).
+
+    Plotly's ``go.Histogram`` bins in the browser, which means the *raw samples* are
+    serialised into the plot payload. On a real validation set that is tens of thousands
+    of floats: a single TP-vs-FP histogram measured 1.0 MB, and the ClearML UI does not
+    render plots that size -- the panel simply comes up blank, with no error to explain
+    it. Binning here and shipping a bar chart of counts takes the same plot to a few KB.
+    """
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return [], [], 0.0
+
+    lo = float(values.min()) if lo is None else lo
+    hi = float(values.max()) if hi is None else hi
+    if hi <= lo:
+        hi = lo + 1e-9
+
+    counts, edges = np.histogram(values, bins=bins, range=(lo, hi))
+    centers = ((edges[:-1] + edges[1:]) / 2).tolist()
+    return centers, counts.astype(int).tolist(), float(edges[1] - edges[0])
+
+
 def _split_curve_name(name: str) -> tuple[str, str]:
     """Split "Precision-Recall(B)" into ("Precision-Recall", "Box").
 
@@ -747,12 +776,21 @@ class YOLOClearMLLogger:
             for values, label in ((tp, "Matched (TP)"), (fp, "Unmatched (FP)")):
                 if values.size == 0:
                     continue
+                # Binned here rather than by go.Histogram, which would serialise every
+                # raw confidence into the payload -- 1 MB for a real validation set, which
+                # the ClearML UI silently declines to render.
+                centers, counts, width = binned_counts(values, bins=50, lo=0.0, hi=1.0)
                 fig.add_trace(
-                    go.Histogram(
-                        x=values.tolist(),
+                    go.Bar(
+                        x=centers,
+                        y=counts,
                         name=label,
                         opacity=0.65,
-                        xbins=dict(start=0.0, end=1.0, size=0.02),
+                        width=width,
+                        hovertemplate=(
+                            f"{label}<br>confidence ~%{{x:.3f}}"
+                            "<br>%{y} detections<extra></extra>"
+                        ),
                     )
                 )
             fig.update_layout(

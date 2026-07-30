@@ -42,6 +42,22 @@ logger = get_logger(__name__)
 val_stats = ValStatsAccumulator()
 
 
+class _ValidatorRef:
+    """Holds the most recent validator so a standalone `val()` can be reported.
+
+    `Model.val()` constructs its validator locally and returns only `validator.metrics`
+    (engine/model.py:625-627) -- it never stores the validator, so there is no
+    `model.validator` to read afterwards, and `model.validator` resolves through
+    `Model.__getattr__` to the nn.Module and raises. `on_val_end` is handed the validator
+    directly, which makes it the one reliable way to get a reference.
+    """
+
+    current: BaseValidator | None = None
+
+
+validator_ref = _ValidatorRef()
+
+
 try:
     import clearml
 
@@ -342,8 +358,16 @@ def on_val_batch_end(validator: BaseTrainer):
     val_stats.update(validator)
 
 
-def on_val_end(validator: BaseTrainer):
-    """Log validation results including labels and predictions."""
+def on_val_end(validator: BaseValidator):
+    """Log validation results, and keep a reference to the validator.
+
+    The reference is what lets src/train.py report the standalone post-training `val()`:
+    that call returns only metrics, so `save_dir`, `confusion_matrix` and
+    `image_metrics` would otherwise be unreachable. Stored unconditionally, including
+    when there is no ClearML task, so the two concerns stay independent.
+    """
+    validator_ref.current = validator
+
     if Task.current_task():
         # Log val_labels and val_pred
         _log_debug_samples(sorted(validator.save_dir.glob("val*.jpg")), "Validation")
@@ -536,32 +560,30 @@ def on_train_end(trainer: BaseTrainer):
             class_names = list(class_names.values())
 
         # Log final results, CM matrix + PR plots (static - kept as fallback)
+        # Only the static plots that have no interactive equivalent. The curve PNGs and
+        # the two confusion-matrix PNGs used to be uploaded here as well, and every one of
+        # them now duplicates a real Plotly plot we report ourselves:
+        #
+        #   Box/Mask{F1,PR,P,R}_curve.png  ->  Curves/{F1,Precision,Recall}-* (Box|Mask)
+        #   confusion_matrix*.png          ->  Confusion Matrix / Counts | Normalized
+        #
+        # Duplicating them costs a matplotlib render and an upload per file, and puts a
+        # second, non-interactive copy of the same information in the UI. The interactive
+        # versions are also the ones that survive a fileserver that will not serve images:
+        # report_matplotlib_figure uploads a PNG and references it by URL, so if that URL
+        # is unreadable the panel renders blank with no error anywhere.
         files = [
             "results.png",
-            "confusion_matrix.png",
-            "confusion_matrix_normalized.png",
             "labels_correlogram.jpg",
             "labels.jpg",
-            *(
-                f"{x}_curve.png"
-                for x in (
-                    "BoxF1",
-                    "BoxPR",
-                    "BoxP",
-                    "BoxR",
-                    "MaskF1",
-                    "MaskPR",
-                    "MaskP",
-                    "MaskR",
-                )
-            ),
         ]
         files = [
             (trainer.save_dir / f) for f in files if (trainer.save_dir / f).exists()
         ]  # filter
 
-        for f in files:
-            _log_plot(title=f.stem, plot_path=f)
+        if args_visualization.get("log_static_plots", True):
+            for f in files:
+                _log_plot(title=f.stem, plot_path=f)
 
         # Report final metrics
         for k, v in trainer.validator.metrics.results_dict.items():

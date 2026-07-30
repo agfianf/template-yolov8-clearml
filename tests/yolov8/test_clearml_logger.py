@@ -5,8 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from src.yolov8.clearml_logger import YOLOClearMLLogger, _split_curve_name
+from src.yolov8.clearml_logger import (
+    YOLOClearMLLogger,
+    _split_curve_name,
+    binned_counts,
+)
 
 
 class TestYOLOClearMLLoggerInit:
@@ -657,3 +662,78 @@ class TestLogLossComponents:
 
         assert result is True
         assert mock_logger.report_scalar.call_count == 3
+
+
+class TestBinnedCounts:
+    """Plot payloads must not carry raw samples.
+
+    go.Histogram bins in the browser, so the raw values end up in the payload: a real
+    validation set produced a 1.0 MB plot, and the ClearML UI renders plots that size as a
+    blank panel with no error to explain it.
+    """
+
+    def test_returns_centers_counts_and_width(self):
+        """Counts sum to the sample size and centers sit inside the range."""
+        centers, counts, width = binned_counts(
+            np.array([0.0, 0.5, 1.0]), bins=10, lo=0.0, hi=1.0
+        )
+
+        assert len(centers) == len(counts) == 10
+        assert sum(counts) == 3
+        assert width == pytest.approx(0.1)
+        assert min(centers) >= 0.0
+        assert max(centers) <= 1.0
+
+    def test_empty_input(self):
+        """No samples yields nothing rather than raising."""
+        assert binned_counts(np.array([])) == ([], [], 0.0)
+
+    def test_non_finite_values_are_dropped(self):
+        """NaN/inf would otherwise poison the range and blank the plot."""
+        _, counts, _ = binned_counts(
+            np.array([0.1, np.nan, np.inf, 0.9]), bins=4, lo=0.0, hi=1.0
+        )
+        assert sum(counts) == 2
+
+    def test_degenerate_range_does_not_divide_by_zero(self):
+        """All-identical values still bin."""
+        _, counts, _ = binned_counts(np.full(5, 0.3), bins=4)
+        assert sum(counts) == 5
+
+
+class TestPlotPayloadSize:
+    """Payloads must stay flat as the dataset grows."""
+
+    def test_confidence_split_is_binned_not_raw(self):
+        """Point count is bounded by the bin count, not the detection count."""
+        mock_task = MagicMock()
+        mock_logger = MagicMock()
+        mock_task.get_logger.return_value = mock_logger
+        logger = YOLOClearMLLogger(task=mock_task)
+
+        rng = np.random.default_rng(0)
+        split = {"tp": rng.random(20_000), "fp": rng.random(30_000), "basis": "box"}
+        assert logger.log_confidence_split(split) is True
+
+        fig = mock_logger.report_plotly.call_args[1]["figure"]
+        # Bars of counts, never a Histogram of raw samples.
+        assert {t.type for t in fig.data} == {"bar"}
+        assert sum(len(t.x) for t in fig.data) <= 2 * 50
+        assert len(fig.to_json()) < 100_000  # 50k detections used to be ~1 MB
+
+    def test_payload_does_not_grow_with_sample_count(self):
+        """10x the detections must not mean 10x the payload."""
+        mock_task = MagicMock()
+        mock_logger = MagicMock()
+        mock_task.get_logger.return_value = mock_logger
+        logger = YOLOClearMLLogger(task=mock_task)
+        rng = np.random.default_rng(1)
+
+        sizes = []
+        for n in (2_000, 20_000):
+            logger.log_confidence_split(
+                {"tp": rng.random(n), "fp": rng.random(n), "basis": "box"}
+            )
+            sizes.append(len(mock_logger.report_plotly.call_args[1]["figure"].to_json()))
+
+        assert sizes[1] < sizes[0] * 1.5
