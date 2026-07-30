@@ -42,6 +42,22 @@ logger = get_logger(__name__)
 val_stats = ValStatsAccumulator()
 
 
+class _ValidatorRef:
+    """Holds the most recent validator so a standalone `val()` can be reported.
+
+    `Model.val()` constructs its validator locally and returns only `validator.metrics`
+    (engine/model.py:625-627) -- it never stores the validator, so there is no
+    `model.validator` to read afterwards, and `model.validator` resolves through
+    `Model.__getattr__` to the nn.Module and raises. `on_val_end` is handed the validator
+    directly, which makes it the one reliable way to get a reference.
+    """
+
+    current: BaseValidator | None = None
+
+
+validator_ref = _ValidatorRef()
+
+
 try:
     import clearml
 
@@ -342,8 +358,16 @@ def on_val_batch_end(validator: BaseTrainer):
     val_stats.update(validator)
 
 
-def on_val_end(validator: BaseTrainer):
-    """Log validation results including labels and predictions."""
+def on_val_end(validator: BaseValidator):
+    """Log validation results, and keep a reference to the validator.
+
+    The reference is what lets src/train.py report the standalone post-training `val()`:
+    that call returns only metrics, so `save_dir`, `confusion_matrix` and
+    `image_metrics` would otherwise be unreachable. Stored unconditionally, including
+    when there is no ClearML task, so the two concerns stay independent.
+    """
+    validator_ref.current = validator
+
     if Task.current_task():
         # Log val_labels and val_pred
         _log_debug_samples(sorted(validator.save_dir.glob("val*.jpg")), "Validation")

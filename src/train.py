@@ -17,7 +17,12 @@ from src.params import args_console
 from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
 from src.utils.logging import get_logger, resolve_level, set_log_level, set_progress_mode
-from src.yolov8.callbacks import callbacks, report_validation_analysis, val_stats
+from src.yolov8.callbacks import (
+    callbacks,
+    report_validation_analysis,
+    val_stats,
+    validator_ref,
+)
 from src.yolov8.clearml_logger import YOLOClearMLLogger
 from src.yolov8.data import DataHandler
 from src.yolov8.exporter import export_handler
@@ -324,12 +329,21 @@ def main():
         # on_train_end does not fire for a standalone val(), so nothing would otherwise
         # report this split at all -- the previous code discarded the return value.
         split_label = "Test " if args_val["split"] == "test" else "Final "
-        report_validation_analysis(
-            model_yolo.validator,
-            iteration=0,
-            gallery_dir=getattr(model_yolo.validator, "save_dir", None),
-            title_prefix=split_label,
-        )
+
+        # NOT model_yolo.validator: Model.val() builds its validator locally and returns
+        # only metrics (engine/model.py:625-627), so that attribute does not exist and
+        # resolves through Model.__getattr__ to the nn.Module, which raises. on_val_end
+        # captured the real one.
+        validator = validator_ref.current
+        if validator is not None:
+            report_validation_analysis(
+                validator,
+                iteration=0,
+                gallery_dir=getattr(validator, "save_dir", None),
+                title_prefix=split_label,
+            )
+        else:
+            logger.warning("no validator captured; skipping %sanalysis", split_label)
         _report_final_scalars(final_metrics, split_label)
     except Exception as e:
         logger.exception("Error during validation: %s", e)

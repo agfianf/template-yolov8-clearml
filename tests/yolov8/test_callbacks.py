@@ -518,3 +518,56 @@ class TestLossRatios:
         cb._report_loss_ratios(logger, {"box_loss": 2.0, "total_loss": 6.0}, iteration=1)
 
         task.get_logger.return_value.report_scalar.assert_not_called()
+
+
+class TestValidatorRef:
+    """A standalone `val()` needs the validator, and ultralytics does not expose it.
+
+    `Model.val()` constructs its validator locally and returns only `validator.metrics`
+    (engine/model.py:625-627). There is no `model.validator`; that attribute resolves
+    through `Model.__getattr__` to the underlying nn.Module and raises AttributeError.
+    src/train.py briefly relied on it, which -- inside its try/except -- would have
+    silently skipped all final-split reporting in production.
+    """
+
+    @pytest.mark.usefixtures("task")
+    def test_on_val_end_captures_the_validator(self, tmp_path):
+        """The hook is handed the validator, so it is the reliable capture point."""
+        cb.validator_ref.current = None
+        validator = SimpleNamespace(save_dir=tmp_path)
+
+        cb.on_val_end(validator)
+
+        assert cb.validator_ref.current is validator
+
+    def test_captured_even_without_a_clearml_task(self, tmp_path):
+        """Capture must not depend on reporting being active."""
+        cb.validator_ref.current = None
+        validator = SimpleNamespace(save_dir=tmp_path)
+
+        with patch.object(cb, "Task") as task_cls:
+            task_cls.current_task.return_value = None
+            cb.on_val_end(validator)
+
+        assert cb.validator_ref.current is validator
+
+    @pytest.mark.usefixtures("task")
+    def test_latest_validator_wins(self, tmp_path):
+        """Training validates every epoch; the standalone val() must be the one kept."""
+        first = SimpleNamespace(save_dir=tmp_path)
+        last = SimpleNamespace(save_dir=tmp_path)
+
+        cb.on_val_end(first)
+        cb.on_val_end(last)
+
+        assert cb.validator_ref.current is last
+
+    def test_ultralytics_model_really_has_no_validator_attribute(self):
+        """Pin the upstream fact this works around, against the real class."""
+        from ultralytics.engine.model import Model
+
+        assert not hasattr(Model, "validator")
+        # ...and it is not assigned during val() either.
+        import inspect
+
+        assert "self.validator" not in inspect.getsource(Model.val)
