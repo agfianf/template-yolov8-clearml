@@ -15,7 +15,7 @@ def stats():
 
 
 def _filter_report(total, kept, dropped_area=0, dropped_class=None, dropped_attr=None):
-    """A FilterReport-shaped object; the real one is a dataclass with Tally fields."""
+    """Build a FilterReport-shaped object; the real one is a dataclass with Tallies."""
     return SimpleNamespace(
         total=total,
         kept=kept,

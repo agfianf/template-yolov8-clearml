@@ -202,9 +202,21 @@ args_val = {
     "batch": 16,  # number of images per batch (-1 for AutoBatch)
     "save_json": False,  # save results to JSON file
     "save_hybrid": False,  # save hybrid version of labels (labels + additional predictions)  # noqa: E501
-    "conf": 0.25,  # object confidence threshold for detection
+    # 0.001 is the ultralytics *val* default (cfg/default.yaml:55), and it is not a
+    # cosmetic choice: args_val["conf"] is passed straight into NMS
+    # (detect/val.py:118), so anything below it is discarded before the metrics ever
+    # see it. The 0.25 that used to be here truncated the high-recall tail of every PR
+    # curve and understated mAP by ~12% relative on a realistic confidence
+    # distribution. It also blinded the operating-point and calibration reports below
+    # 0.25 -- they could not recommend or measure a threshold they never saw.
+    # The confusion matrix wants the opposite value; it is pinned separately by
+    # on_val_batch_start. See args_visualization["confusion_matrix_conf"].
+    "conf": 0.001,
     "iou": 0.7,  # intersection over union (IoU) threshold for NMS
-    "max_det": 100,  # maximum number of detections per image
+    # 300 is the ultralytics default. 100 caps recall on crowded images and so lowers
+    # mAP independently of `conf`. Check "Instances per image" in the Dataset report
+    # before lowering it again.
+    "max_det": 300,
     "half": True,  # use half precision (FP16)
     "device": 0,  # device to run on, i.e. cuda device=0/1/2/3 or device=cpu
     "dnn": False,  # use OpenCV DNN for ONNX inference
@@ -255,6 +267,11 @@ args_visualization = {
     "log_loss_components": True,  # Separate box, cls, dfl loss logging
     "log_speed_metrics": True,  # Log preprocess, inference, postprocess times
     "log_per_class_scatter": True,  # Log per-class metric scatter/bar plots
+    # Display threshold for the confusion matrix only, held independent of
+    # args_val["conf"]. Ultralytics feeds one value to both NMS and the matrix, but they
+    # want opposite things: metrics need a floor near zero, a readable matrix needs
+    # ~0.25 or it fills with low-confidence detections. Pinned in on_val_batch_start.
+    "confusion_matrix_conf": 0.25,
     # --- per-epoch, cheap ---------------------------------------------------------
     # mask mAP minus box mAP. Segmentation runs only; a no-op on a detect model.
     "log_mask_box_gap": True,

@@ -185,11 +185,29 @@ shipped, and each has a regression test that fails if it is undone.
   segmentation** — `SegmentationValidator` inherits `update_metrics`, so
   `process_batch` never sees masks. Label those plots "Box". Mask-aware ranking comes
   from `metrics.seg.image_metrics`, which *is* fed by `mask_iou`.
-- **Three different thresholds are in play** and read as contradictions otherwise: mAP
-  and the curves use `conf=0.001`; the P/R/F1 scalars ultralytics prints are at each
-  class's max-F1 confidence; the confusion matrix uses `conf=args.conf` with
-  `iou_thres=0.45` hard-coded — *not* `args_val["iou"]`. The threshold to actually
-  deploy at is reported separately under `Operating Point`.
+- **`args_val["conf"]` goes into NMS, so it silently changes mAP.** It is passed to
+  `non_max_suppression` (`detect/val.py:118`), and anything filtered there never reaches
+  the metrics. It must stay at `0.001` — the ultralytics val default. The `0.25` that was
+  here truncated the high-recall tail of every PR curve, understated mAP by ~12% relative,
+  and blinded the operating-point and calibration reports below 0.25. `max_det` is the
+  same kind of trap: 100 caps recall on crowded images, so it is 300 (the default).
+- **The confusion matrix wants the opposite threshold, and is pinned separately.**
+  Ultralytics feeds one `args.conf` to both NMS and the matrix (`detect/val.py:195`), but
+  metrics need a floor near zero while a readable matrix needs ~0.25 or it fills with
+  low-confidence detections. `on_val_batch_start` wraps `process_batch` to hold it at
+  `args_visualization["confusion_matrix_conf"]`. Its `iou_thres=0.45` is hard-coded
+  upstream and is *not* `args_val["iou"]`.
+- **Three different thresholds therefore coexist** and read as contradictions if
+  unlabelled: mAP and the curves at 0.001, the matrix at 0.25, and the P/R/F1 scalars
+  ultralytics prints at each class's max-F1 confidence. The threshold to actually deploy
+  at is reported separately under `Operating Point`.
+- **Mask mAP is computed at quarter resolution unless `save_json` or `save_txt` is set.**
+  `segment/val.py:74` picks `process_mask` (prototype resolution, 160×160 at
+  `imgsz=640`) versus `process_mask_native`, and `:128` downsamples the ground-truth
+  masks to match. Both are self-consistent, but mask mAP from the two settings is **not
+  comparable** — do not read a jump in mask mAP as a model improvement if `save_json`
+  changed. This also means the mask-vs-box gap and per-class mask mAP inherit that
+  resolution dependence.
 - **`args_val["visualize"]` is uncapped**: it writes one GT/FP/TP/FN panel per
   validated image into `<save_dir>/visualizations`. It is enabled for the single final
   `val()` only, and only the worst N panels are uploaded.

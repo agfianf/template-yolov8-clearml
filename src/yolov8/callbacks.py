@@ -294,6 +294,39 @@ def on_fit_epoch_end(trainer: BaseTrainer):
                 clearml_logger.log_mask_box_gap(gap, trainer.epoch)
 
 
+def on_val_batch_start(validator: BaseValidator):
+    """Pin the confusion matrix's confidence threshold, decoupling it from `args.conf`.
+
+    Ultralytics passes the *same* `args.conf` to NMS and to the confusion matrix
+    (detect/val.py:195), but the two want opposite values. Metrics need a floor near zero
+    so the PR curve keeps its high-recall tail -- anything filtered by NMS never reaches
+    the metrics at all, so a floor of 0.25 silently understates mAP. A readable confusion
+    matrix needs the opposite: a threshold around 0.25, or it fills with low-confidence
+    detections and a background column that swamps everything else.
+
+    So `args_val["conf"]` is 0.001 (the ultralytics val default, correct for metrics) and
+    this wraps `process_batch` to hold the matrix at its own display threshold.
+
+    Fires once per batch, so it is written to be idempotent; `init_metrics` (which creates
+    the matrix) runs at engine/validator.py:242, before the first `on_val_batch_start` at
+    :245 and before any `update_metrics` at :266.
+    """
+    matrix = getattr(validator, "confusion_matrix", None)
+    if matrix is None or getattr(matrix, "_conf_pinned", False):
+        return
+
+    threshold = args_visualization.get("confusion_matrix_conf", 0.25)
+    original = matrix.process_batch
+
+    def process_batch_at_display_conf(*args, **kwargs):
+        kwargs["conf"] = threshold
+        return original(*args, **kwargs)
+
+    matrix.process_batch = process_batch_at_display_conf
+    matrix._conf_pinned = True
+    logger.debug("confusion matrix pinned to conf=%s", threshold)
+
+
 def on_val_batch_end(validator: BaseTrainer):
     """Capture per-detection confidence/match pairs before ultralytics discards them.
 
@@ -633,6 +666,7 @@ callbacks = (
         "on_pretrain_routine_start": on_pretrain_routine_start,
         "on_train_epoch_end": on_train_epoch_end,
         "on_fit_epoch_end": on_fit_epoch_end,
+        "on_val_batch_start": on_val_batch_start,
         "on_val_batch_end": on_val_batch_end,
         "on_val_end": on_val_end,
         "on_train_end": on_train_end,

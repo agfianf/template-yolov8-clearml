@@ -321,6 +321,70 @@ class TestReportValidationAnalysis:
         task.get_logger.return_value.report_image.assert_not_called()
 
 
+class TestConfusionMatrixConfPinning:
+    """The matrix's threshold must be independent of the NMS threshold.
+
+    Ultralytics passes one `args.conf` to both (detect/val.py:195), but metrics need a
+    floor near zero to keep the PR curve's high-recall tail while a readable matrix needs
+    ~0.25. args_val["conf"] serves the metrics; this pinning serves the matrix.
+    """
+
+    @staticmethod
+    def _validator():
+        matrix = MagicMock()
+        matrix._conf_pinned = False
+        return SimpleNamespace(confusion_matrix=matrix)
+
+    def test_forces_display_threshold_over_caller_value(self):
+        """Whatever conf update_metrics passes, the matrix uses the display value."""
+        validator = self._validator()
+        original = validator.confusion_matrix.process_batch
+
+        cb.on_val_batch_start(validator)
+        # This is what detect/val.py does: passes args.conf, which is now 0.001.
+        validator.confusion_matrix.process_batch({}, {}, conf=0.001)
+
+        assert original.call_args[1]["conf"] == 0.25
+
+    def test_threshold_is_configurable(self):
+        """The pinned value comes from args_visualization, not a constant."""
+        validator = self._validator()
+        original = validator.confusion_matrix.process_batch
+
+        with patch.dict(cb.args_visualization, {"confusion_matrix_conf": 0.4}):
+            cb.on_val_batch_start(validator)
+        validator.confusion_matrix.process_batch({}, {}, conf=0.001)
+
+        assert original.call_args[1]["conf"] == 0.4
+
+    def test_idempotent_across_batches(self):
+        """Fires once per batch, so it must not wrap the wrapper repeatedly."""
+        validator = self._validator()
+
+        cb.on_val_batch_start(validator)
+        wrapped_once = validator.confusion_matrix.process_batch
+        for _ in range(5):
+            cb.on_val_batch_start(validator)
+
+        assert validator.confusion_matrix.process_batch is wrapped_once
+
+    def test_no_matrix_is_a_noop(self):
+        """With plots=False there is no matrix, and that is not an error."""
+        cb.on_val_batch_start(SimpleNamespace(confusion_matrix=None))
+        cb.on_val_batch_start(SimpleNamespace())  # must not raise
+
+    def test_positional_args_are_preserved(self):
+        """The wrapper must pass detections and batch through untouched."""
+        validator = self._validator()
+        original = validator.confusion_matrix.process_batch
+
+        cb.on_val_batch_start(validator)
+        detections, batch = {"cls": [1]}, {"cls": [1]}
+        validator.confusion_matrix.process_batch(detections, batch)
+
+        assert original.call_args[0] == (detections, batch)
+
+
 class TestReportVolume:
     """Report volume must not grow with epoch count.
 
@@ -359,8 +423,10 @@ class TestReportVolume:
         assert short == long == 0
 
     def test_scalars_do_grow_with_epochs(self, task, trainer):
-        """The control: scalars are series, so they must scale. Otherwise the test above
-        would pass simply because nothing was reported at all.
+        """Confirm scalars do scale, unlike the heavy reports.
+
+        The control for the test above, which would otherwise pass simply because nothing
+        was reported at all.
         """
         with patch.object(cb, "model_info_for_loggers", return_value={}):
             trainer.epoch = 0
@@ -385,8 +451,7 @@ class TestReportVolume:
 
         # extract_worst_images already applied the limit; the gallery must not re-scan
         # the directory and upload everything it finds there.
-        worst = pd.DataFrame({"Rank": [f"{i:02d}" for i in range(4)],
-                              "Image": names[:4]})
+        worst = pd.DataFrame({"Rank": [f"{i:02d}" for i in range(4)], "Image": names[:4]})
         logger = cb.YOLOClearMLLogger(task)
         cb._log_error_gallery(logger, worst, tmp_path, iteration=0, title_prefix="")
 
