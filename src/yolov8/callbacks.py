@@ -560,32 +560,30 @@ def on_train_end(trainer: BaseTrainer):
             class_names = list(class_names.values())
 
         # Log final results, CM matrix + PR plots (static - kept as fallback)
+        # Only the static plots that have no interactive equivalent. The curve PNGs and
+        # the two confusion-matrix PNGs used to be uploaded here as well, and every one of
+        # them now duplicates a real Plotly plot we report ourselves:
+        #
+        #   Box/Mask{F1,PR,P,R}_curve.png  ->  Curves/{F1,Precision,Recall}-* (Box|Mask)
+        #   confusion_matrix*.png          ->  Confusion Matrix / Counts | Normalized
+        #
+        # Duplicating them costs a matplotlib render and an upload per file, and puts a
+        # second, non-interactive copy of the same information in the UI. The interactive
+        # versions are also the ones that survive a fileserver that will not serve images:
+        # report_matplotlib_figure uploads a PNG and references it by URL, so if that URL
+        # is unreadable the panel renders blank with no error anywhere.
         files = [
             "results.png",
-            "confusion_matrix.png",
-            "confusion_matrix_normalized.png",
             "labels_correlogram.jpg",
             "labels.jpg",
-            *(
-                f"{x}_curve.png"
-                for x in (
-                    "BoxF1",
-                    "BoxPR",
-                    "BoxP",
-                    "BoxR",
-                    "MaskF1",
-                    "MaskPR",
-                    "MaskP",
-                    "MaskR",
-                )
-            ),
         ]
         files = [
             (trainer.save_dir / f) for f in files if (trainer.save_dir / f).exists()
         ]  # filter
 
-        for f in files:
-            _log_plot(title=f.stem, plot_path=f)
+        if args_visualization.get("log_static_plots", True):
+            for f in files:
+                _log_plot(title=f.stem, plot_path=f)
 
         # Report final metrics
         for k, v in trainer.validator.metrics.results_dict.items():

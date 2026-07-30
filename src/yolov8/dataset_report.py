@@ -179,21 +179,32 @@ def _geometry_figure(areas: list[float], aspects: list[float]) -> go.Figure | No
     if not areas:
         return None
 
+    from src.yolov8.clearml_logger import binned_counts
+
     fig = go.Figure()
+    # Binned here, not by go.Histogram: a dataset of any size would otherwise put every
+    # box dimension into the plot payload (857 KB measured on 618 images), which the
+    # ClearML UI renders as a blank panel.
+    centers, counts, width = binned_counts(np.sqrt(np.asarray(areas, dtype=float)), 50)
     fig.add_trace(
-        go.Histogram(
-            x=np.sqrt(np.asarray(areas, dtype=float)).tolist(),
+        go.Bar(
+            x=centers,
+            y=counts,
+            width=width,
             name="sqrt(area) / image edge",
-            nbinsx=50,
+            hovertemplate="~%{x:.3f} of image edge<br>%{y} instances<extra></extra>",
         )
     )
     if aspects:
+        a_centers, a_counts, a_width = binned_counts(np.asarray(aspects, dtype=float), 50)
         fig.add_trace(
-            go.Histogram(
-                x=np.asarray(aspects, dtype=float).tolist(),
+            go.Bar(
+                x=a_centers,
+                y=a_counts,
+                width=a_width,
                 name="aspect ratio (w/h)",
-                nbinsx=50,
                 visible="legendonly",
+                hovertemplate="aspect ~%{x:.2f}<br>%{y} instances<extra></extra>",
             )
         )
     fig.update_layout(

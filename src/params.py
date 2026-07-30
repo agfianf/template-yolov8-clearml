@@ -272,6 +272,12 @@ args_visualization = {
     # want opposite things: metrics need a floor near zero, a readable matrix needs
     # ~0.25 or it fills with low-confidence detections. Pinned in on_val_batch_start.
     "confusion_matrix_conf": 0.25,
+    # Re-upload ultralytics' own PNGs (results, labels, labels_correlogram) as plots.
+    # The curve and confusion-matrix PNGs are no longer sent at all: each duplicated an
+    # interactive plot we report ourselves. Turn this off entirely if the ClearML
+    # fileserver cannot serve images, since a bad image URL renders as a blank panel
+    # with no error anywhere.
+    "log_static_plots": True,
     # --- per-epoch, cheap ---------------------------------------------------------
     # mask mAP minus box mAP. Segmentation runs only; a no-op on a detect model.
     "log_mask_box_gap": True,

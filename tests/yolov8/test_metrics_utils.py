@@ -703,3 +703,53 @@ class TestCollectPredictionConfidences:
 
         assert all_confs == []
         assert per_class == {}
+
+
+class TestCurveDownsampling:
+    """Curve payloads must not scale with class count.
+
+    Ultralytics computes 1000 x-points per class, per curve family, and a segmentation run
+    has eight families. At 80 classes that is megabytes of JSON, which the ClearML UI
+    renders as a blank panel rather than an error.
+    """
+
+    def test_curves_are_capped(self):
+        """Every family is thinned to at most MAX_CURVE_POINTS."""
+        from src.yolov8.metrics_utils import MAX_CURVE_POINTS
+
+        curves = extract_curve_data(_validator(_build_metrics(SegmentMetrics)))
+
+        for c in curves:
+            assert len(c["x"]) <= MAX_CURVE_POINTS
+            for s in c["series"]:
+                assert len(s["y"]) == len(c["x"])
+
+    def test_endpoints_are_preserved(self):
+        """Thinning must not clip the ends of the curve."""
+        metrics = _build_metrics(DetMetrics)
+        curves = extract_curve_data(_validator(metrics))
+        px = np.asarray(metrics.box.px, dtype=float)
+
+        pr = next(c for c in curves if c["name"] == "Precision-Recall(B)")
+        assert pr["x"][0] == pytest.approx(px[0])
+        assert pr["x"][-1] == pytest.approx(px[-1])
+
+    def test_shape_is_preserved(self):
+        """A thinned curve still tracks the original within tolerance."""
+        metrics = _build_metrics(DetMetrics)
+        curves = extract_curve_data(_validator(metrics))
+        f1 = next(c for c in curves if c["name"] == "F1-Confidence(B)")
+
+        full = np.asarray(metrics.box.f1_curve[0], dtype=float)
+        thinned = np.asarray(f1["series"][0]["y"], dtype=float)
+        assert thinned.max() == pytest.approx(full.max(), abs=0.02)
+
+    def test_short_curves_are_untouched(self):
+        """Below the cap nothing is dropped."""
+        from src.yolov8.metrics_utils import _downsample
+
+        x = np.linspace(0, 1, 10)
+        y = np.vstack([x, x])
+        dx, dy = _downsample(x, y)
+        assert dx.shape[0] == 10
+        assert dy.shape == (2, 10)

@@ -571,3 +571,66 @@ class TestValidatorRef:
         import inspect
 
         assert "self.validator" not in inspect.getsource(Model.val)
+
+
+class TestStaticPlotUploads:
+    """Static PNGs are only worth uploading when nothing interactive replaces them."""
+
+    ALL_ULTRALYTICS_PLOTS = [
+        "results.png",
+        "labels.jpg",
+        "labels_correlogram.jpg",
+        "confusion_matrix.png",
+        "confusion_matrix_normalized.png",
+        "BoxF1_curve.png",
+        "BoxPR_curve.png",
+        "BoxP_curve.png",
+        "BoxR_curve.png",
+        "MaskPR_curve.png",
+    ]
+
+    def _run(self, trainer):
+        for name in self.ALL_ULTRALYTICS_PLOTS:
+            (trainer.save_dir / name).write_bytes(b"x")
+        with (
+            patch.object(cb, "_log_plot") as log_plot,
+            patch.object(cb, "register_model_to_clearml"),
+            patch.object(cb, "report_validation_analysis"),
+            patch.object(cb, "yaml_loader", return_value={"names": ["a"]}),
+            patch.object(
+                cb, "extract_confusion_matrix_data", return_value=(None, [], None)
+            ),
+        ):
+            trainer.best = trainer.save_dir / "best.pt"
+            trainer.last = trainer.save_dir / "last.pt"
+            cb.on_train_end(trainer)
+        return [c[1]["title"] for c in log_plot.call_args_list]
+
+    @pytest.mark.usefixtures("task")
+    def test_duplicated_plots_are_not_uploaded(self, trainer):
+        """Curves and confusion matrices already exist as interactive plots.
+
+        Uploading them again produced a second, non-interactive copy of the same data --
+        and those copies are exactly the panels that render blank when the ClearML
+        fileserver cannot serve images, because report_matplotlib_figure uploads a PNG and
+        references it by URL.
+        """
+        titles = self._run(trainer)
+
+        assert not [t for t in titles if "curve" in t]
+        assert not [t for t in titles if "confusion_matrix" in t]
+
+    @pytest.mark.usefixtures("task")
+    def test_unduplicated_plots_are_still_uploaded(self, trainer):
+        """results/labels have no interactive equivalent, so they stay."""
+        titles = self._run(trainer)
+
+        assert set(titles) == {"results", "labels", "labels_correlogram"}
+
+    @pytest.mark.usefixtures("task")
+    def test_flag_disables_static_uploads_entirely(self, trainer):
+        """One switch for deployments whose fileserver cannot serve images."""
+        with patch.dict(cb.args_visualization, {"log_static_plots": False}):
+            titles = self._run(trainer)
+
+        assert titles == []
