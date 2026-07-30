@@ -21,6 +21,10 @@ make run                    # PYTHONPATH=. uv run src/train.py
 
 # Run tests
 make test_code              # pytest tests -v
+PYTHONPATH=. uv run pytest -m "not slow"    # skip tests that invoke real exporters
+
+# Test the export stage on its own (~7s, no CVAT, no training, no weights download)
+PYTHONPATH=. uv run pytest tests/yolov8/test_export_smoke.py
 
 # Linting and formatting (via pre-commit or directly)
 uv run ruff check --fix     # Lint with auto-fix
@@ -84,6 +88,28 @@ YOLO Training
 - Double quotes for strings
 - Ruff for linting/formatting with rules: E, F, I, UP, B, W, C90, N, D, PYI, PT, RET, SIM, ARG, ERA
 - Pre-commit hooks configured
+
+## Gotchas When Running on an Agent
+
+- **The image shadows `src/`.** The container sets `PYTHONPATH=/workspace` and bakes a
+  copy of `src/` in, so `src.yolov8.*` resolves to the **image's** copy while
+  `src/train.py` runs from the git checkout. Editing anything under `src/yolov8/` has no
+  effect on a remote run until the image is rebuilt (`make build`). The two can drift
+  silently.
+- **The container runs as root on purpose.** clearml-agent's docker-mode bootstrap writes
+  to `/etc/apt`, `/root/.cache/pip` and `/root/.ssh` and runs `apt-get`. Adding a
+  `USER` directive to the Dockerfile makes every remote task hang before reaching
+  `src/train.py`.
+- **`torch` is pinned to a CUDA 12.x wheel window** (`>=2.9,<2.10`). Newer torch resolves
+  to a CUDA 13 wheel that needs a much newer driver and, if unmet, silently falls back to
+  CPU instead of erroring. Check every agent host's driver before widening it.
+- **A task pins its own commit.** `version_num` on an existing task wins over its branch
+  name, so editing the branch alone does not move it to newer code; clear the commit to
+  follow the branch. Agents also cache clones per repo, and a stale cache can write an old
+  branch name back onto the task after execution.
+- **Deprecated export args.** `args_export["params"]` still uses `half` and `int8`, which
+  ultralytics has replaced with `quantize`. Tolerated today; `tests/yolov8/test_export_smoke.py`
+  fails when that stops being true.
 
 ## ClearML Integration Points
 
