@@ -7,6 +7,7 @@ anywhere. Every asset is inlined and this suite is what keeps it that way.
 """
 
 import json
+import math
 import re
 
 from src.report.render import render_report
@@ -29,9 +30,23 @@ class TestJsonBlob:
 
     def test_blob_contains_no_nan(self, seg_blob):
         """`NaN` is valid Python and invalid JSON; `JSON.parse` rejects the whole page."""
-        payload = json.dumps(seg_blob, allow_nan=False)  # raises if any NaN survived
+        json.dumps(seg_blob, allow_nan=False)  # raises if any NaN or Infinity survived
 
-        assert "NaN" not in payload
+        # Walked rather than grepped. This used to search the serialised string for the
+        # literal "NaN", which the base64 of a thumbnail can contain by coincidence --
+        # and did, the first time the JPEG encoder settings changed. Checking the floats
+        # themselves is both stronger and immune to that.
+        def walk(node, path="blob"):
+            if isinstance(node, float):
+                assert math.isfinite(node), f"{path} is {node}"
+            elif isinstance(node, dict):
+                for key, value in node.items():
+                    walk(value, f"{path}.{key}")
+            elif isinstance(node, (list, tuple)):
+                for i, value in enumerate(node):
+                    walk(value, f"{path}[{i}]")
+
+        walk(seg_blob)
 
     def test_script_close_tag_cannot_escape_the_blob(self, tmp_path):
         """A class named `</script>` must not be able to end the element early."""
@@ -164,7 +179,7 @@ class TestNotApplicableIsNotMissing:
     def test_detect_omits_seg_only_dataset_figures(self, det_blob):
         document = markup_only(render_report(det_blob))
         dataset = re.search(
-            r'<section id="s-dataset">(.*?)</section>', document, re.DOTALL
+            r'<section id="s-dataset"[^>]*>(.*?)</section>', document, re.DOTALL
         ).group(1)
 
         for fig_id in self.SEG_ONLY:
@@ -303,7 +318,7 @@ class TestImageFileSection:
     def test_the_image_figures_and_stat_row_are_rendered(self, det_blob):
         document = markup_only(render_report(det_blob))
         dataset = re.search(
-            r'<section id="s-dataset">(.*?)</section>', document, re.DOTALL
+            r'<section id="s-dataset"[^>]*>(.*?)</section>', document, re.DOTALL
         ).group(1)
 
         for fig_id in ("f_resolutions", "f_img_aspect", "f_megapixels"):

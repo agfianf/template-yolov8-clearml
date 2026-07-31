@@ -83,7 +83,7 @@ DEFAULT_CFG = {
     "confusion_matrix_conf": 0.25,
     "report_gallery_per_grid": 24,
     "report_max_thumbnails": 200,
-    "report_thumbnail_px": 192,
+    "report_thumbnail_px": 320,
     "report_high_conf_fp_threshold": 0.7,
     "report_low_support_threshold": 30,
     "report_tide": True,

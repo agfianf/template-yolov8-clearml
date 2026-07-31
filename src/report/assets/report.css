@@ -13,7 +13,18 @@
      thumbnail caption, and every one of them names an opaque fallback below.
    - the confusion matrix ships one set of cells carrying both ramps (`hm-N nm-N`); only
      the `[data-cm]` rules may give `.nm-*` a fill, or the normalised ramp would win in
-     both modes and paint every cell the same. */
+     both modes and paint every cell the same.
+
+   Corners are square. Every panel, tile, button and control here is a rectangle: the
+   rounding was applied at five different radii, which read as five different materials
+   on one page. The three exceptions are shapes whose meaning *is* the round: the KPI
+   progress rings, the severity dots, and the annotations switch, which has to look like
+   a switch.
+
+   Six accents cycle down the page, set by `section[data-accent]` and consumed only by
+   the heading tile and the "how to read it" rule. No accent ever colours type or data --
+   the charts stay on the one cyan-to-lime brand ramp, so a colour in a figure always
+   means a value and never a section. */
 
 :root{
   color-scheme: light dark;
@@ -31,7 +42,10 @@
   --hover:color-mix(in srgb,var(--ink) 3%,var(--paper));
   --peer:color-mix(in srgb,var(--ink) 42%,var(--paper));
   --good:#0ca30c; --warn:#b57614; --serious:#AD2111;
-  --col:720px; --col-full:1060px; --nav-h:52px;
+  /* six section accents: the three brand hues plus three that sit beside them */
+  --acc-0:#02B1F0; --acc-1:#74D5C2; --acc-2:#A3E85A;
+  --acc-3:#8B7DD8; --acc-4:#E8A93B; --acc-5:#E88AA0;
+  --col:720px; --col-full:1060px; --nav-h:52px; --rail:150px;
   --font-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
   --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   --sheet:color-mix(in srgb,var(--paper) 93%,transparent);
@@ -67,6 +81,16 @@
 }
 
 *,*::before,*::after{box-sizing:border-box}
+/* One scrollbar treatment for the page and every scroller inside it: a thin track-less
+   bar that only shows its thumb. Firefox takes the two properties, everything else takes
+   the pseudo-elements, and the gallery keeps its own `scrollbar-width:none`. */
+*{scrollbar-width:thin;scrollbar-color:var(--rule) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:var(--rule);border:3px solid transparent;background-clip:content-box;
+}
+::-webkit-scrollbar-thumb:hover{background:var(--ink-3);background-clip:content-box}
 html{scroll-behavior:smooth;scroll-padding-top:calc(var(--nav-h) + 20px)}
 body{
   margin:0;background:var(--paper);color:var(--ink);
@@ -90,7 +114,6 @@ body::before{
   border:1px solid var(--glass-border);
   box-shadow:inset 0 1px 0 var(--glass-hi),0 1px 2px rgba(16,24,32,.05),
              0 8px 24px -12px rgba(16,24,32,.14);
-  border-radius:12px;
 }
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   .glass,.lb,.thumb .cap{background:var(--paper)}
@@ -120,7 +143,7 @@ body::before{
 /* ---------------------------- nav -------------------------------------- */
 .nav{
   position:sticky;top:0;z-index:40;height:var(--nav-h);
-  border-radius:0;border-left:0;border-right:0;border-top:0;
+  border-left:0;border-right:0;border-top:0;
   border-bottom:1px solid var(--rule);
   box-shadow:inset 0 1px 0 var(--glass-hi),0 1px 2px rgba(16,24,32,.04);
 }
@@ -133,9 +156,8 @@ body::before{
   display:flex;align-items:center;gap:14px;
 }
 .brandmark{display:flex;align-items:center;gap:9px;min-width:0;flex:0 1 auto}
-.brandmark .dot{
-  width:16px;height:16px;border-radius:5px;background:var(--brand-grad);flex:none;
-}
+.brandmark .dot{width:16px;height:16px;background:var(--brand-grad);flex:none}
+.nav-spacer{margin-left:auto}
 .brand-txt{min-width:0;line-height:1.15}
 .eyebrow{
   font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
@@ -145,56 +167,76 @@ body::before{
   font-size:12.5px;font-weight:500;color:var(--ink-1);display:block;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.nav-links{
-  margin-left:auto;display:flex;align-items:center;gap:13px;min-width:0;
-  height:100%;overflow-x:auto;overflow-y:hidden;
-  scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;
-}
-.nav-links::-webkit-scrollbar{display:none}
-.nav-links a{
-  font-size:12px;color:var(--ink-2);text-decoration:none;white-space:nowrap;
-  flex:none;padding:17px 0;
-}
-.nav-links a:hover{color:var(--ink)}
-/* The nav carries the active marker below the TOC breakpoint, where .toc is hidden and
-   would otherwise leave a scrolling reader with no position indicator at all. */
-.nav-links a.on{color:var(--ink);font-weight:500;box-shadow:inset 0 -2px 0 var(--ink)}
 .tgl{
   font:500 12.5px/1 var(--font-sans);color:var(--ink-2);cursor:pointer;
-  background:transparent;border:1px solid var(--rule);border-radius:7px;
-  padding:5px 9px;flex:none;
+  background:transparent;border:1px solid var(--rule);
+  padding:6px 10px;flex:none;
 }
 .tgl:hover{color:var(--ink);background:var(--hover)}
+.tgl[aria-expanded="true"]{color:var(--ink);background:var(--hover)}
+/* The header row used to repeat the contents as a second list of links. It now opens
+   the one list, and only where that list is not already on screen. */
+.toc-btn{display:none}
 
-/* ---------------------------- floating TOC ----------------------------- */
-/* transparent by construction: no background, no border, no blur, no box. */
+/* ---------------------------- contents list ---------------------------- */
+/* One list, two presentations. Wide: a transparent rail beside the sheet -- no
+   background, no border, no blur, no box. Narrow: the same markup as a panel the header
+   button opens, because a thirteen-section report with no contents at all was the state
+   this used to fall back to below 1400px. */
 .toc{
   display:none;position:fixed;z-index:30;
   top:50%;transform:translateY(-50%);
-  left:max(12px,calc(50% - var(--col-full)/2 - 166px));
-  width:150px;
+  left:max(12px,calc(50% - var(--col-full)/2 - var(--rail) - 16px));
+  width:var(--rail);
 }
 .toc a{
-  display:block;position:relative;padding-left:12px;
-  font-size:12px;line-height:1.9;color:var(--ink-3);text-decoration:none;
+  display:flex;align-items:center;gap:8px;position:relative;padding-left:12px;
+  font-size:12px;line-height:2;color:var(--ink-3);text-decoration:none;
 }
 .toc a:hover{color:var(--ink-2)}
 .toc a.on{color:var(--ink);font-weight:500}
 .toc a.on::before{
-  content:"";position:absolute;left:0;top:.42em;width:2px;height:1em;
+  content:"";position:absolute;left:0;top:.5em;width:2px;height:1em;
   background:var(--brand-grad);
 }
 .toc a:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:2px}
+/* The icon repeats the one on the section heading, at 13px and in the ink colour: it is
+   what makes a glance at the rail and a glance at the page agree. */
+.toc-i{display:inline-flex;flex:none;opacity:.62}
+.toc-i .ico{width:15px;height:15px;background:none;color:inherit}
+.toc-i svg{width:13px;height:13px}
+.toc a.on .toc-i{opacity:1}
+
 @media (min-width:1400px){.toc{display:block}}
+/* Between the two: the rail pins to the left edge and the sheet is pushed clear of it,
+   rather than the rail being switched off because the two would have overlapped. */
+@media (min-width:1180px) and (max-width:1399.98px){
+  .toc{display:block;left:14px;--rail:138px;width:var(--rail)}
+  .wrap{padding-left:calc(var(--rail) + 34px)}
+}
+@media (max-width:1179.98px){
+  .toc-btn{display:block}
+  .toc{
+    top:var(--toc-top,var(--nav-h));left:auto;right:14px;transform:none;
+    width:212px;max-height:min(70vh,560px);overflow-y:auto;
+    background:var(--paper);border:1px solid var(--rule);padding:10px 12px;z-index:60;
+    box-shadow:0 14px 34px -18px rgba(16,24,32,.5);
+  }
+  .toc.open{display:block}
+  .toc a{line-height:2.1}
+}
 
 /* ---------------------------- shell ------------------------------------ */
 .wrap{max-width:var(--col-full);margin:0 auto;padding:0 20px}
 .sheet{
-  display:block;background:var(--sheet);border-radius:14px;
+  display:block;background:var(--sheet);
   padding:34px 44px 56px;margin:26px 0 30px;
 }
+/* Scroll room past the last section, so the contents list can actually put it under the
+   header. Without it the final two entries highlighted but never arrived. */
+.tail{height:min(42vh,360px)}
 @media (max-width:640px){
-  .sheet{padding:24px 18px 40px;border-radius:10px}
+  .sheet{padding:24px 18px 40px}
   .wrap{padding:0 12px}
 }
 /* one reading column, 720 centred; only .wide breaks out */
@@ -203,18 +245,65 @@ body::before{
 
 /* ---------------------------- type ------------------------------------- */
 h1{font-size:26px;font-weight:600;letter-spacing:-.011em;line-height:1.2;margin:0 0 8px}
-h2{font-size:19px;font-weight:600;letter-spacing:-.005em;margin:48px 0 12px;line-height:1.3}
+h2{
+  font-size:19px;font-weight:600;letter-spacing:-.005em;margin:52px 0 12px;
+  line-height:1.3;display:flex;align-items:center;gap:11px;
+}
 h3{font-size:15px;font-weight:500;margin:26px 0 8px;color:var(--ink-1)}
 p{margin:0 0 16px}
 a{color:var(--brand-cyan-ink)}
-.sub{font-size:12.5px;color:var(--ink-3);margin:0 0 16px;max-width:var(--col)}
+.sub{font-size:13.5px;color:var(--ink-2);margin:0 0 16px;max-width:var(--col)}
+
+/* ---------------------------- section accents -------------------------- */
+section{--acc:var(--acc-0)}
+section[data-accent="1"]{--acc:var(--acc-1)}
+section[data-accent="2"]{--acc:var(--acc-2)}
+section[data-accent="3"]{--acc:var(--acc-3)}
+section[data-accent="4"]{--acc:var(--acc-4)}
+section[data-accent="5"]{--acc:var(--acc-5)}
+/* Pastel against paper in either theme, because --paper is what flips. */
+.ico{
+  width:30px;height:30px;flex:none;display:inline-flex;
+  align-items:center;justify-content:center;
+  background:color-mix(in srgb,var(--acc) 18%,var(--paper));
+  color:color-mix(in srgb,var(--acc) 62%,var(--ink));
+}
+.ico svg{
+  fill:none;stroke:currentColor;stroke-width:1.4;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+/* What to do with the section, kept visually apart from what it is. */
+.read{
+  font-size:13.5px;line-height:1.65;color:var(--ink-1);margin:0 0 20px;
+  padding:13px 17px;max-width:var(--col);
+  background:color-mix(in srgb,var(--acc) 9%,var(--paper));
+  border-left:2px solid color-mix(in srgb,var(--acc) 62%,var(--ink));
+}
+.read b{font-weight:600;color:var(--ink)}
+.read em{font-style:italic}
+
+/* ---------------------------- glossary --------------------------------- */
+.gloss{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(288px,1fr));
+  gap:0 34px;margin:22px 0 6px;padding:0;
+}
+.gloss > div{
+  display:flex;gap:12px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--rule-2);
+}
+.gloss dt{
+  flex:0 0 46px;font-family:var(--font-mono);font-size:12px;font-weight:600;
+  color:var(--ink);
+}
+.gloss dd{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.gloss dd em{font-style:italic;color:var(--ink-1)}
 .meta{font-size:12.5px;color:var(--ink-3);line-height:1.7;margin:0}
 .meta b{font-weight:500;color:var(--ink-2)}
 /* experiment tags: identifiers, not a taxonomy -- no border, no per-tag colour */
 .tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px;padding:0;list-style:none}
 .tags li{
   font-size:11px;line-height:1.5;color:var(--ink-2);background:var(--band);
-  border-radius:4px;padding:2px 7px;white-space:nowrap;
+  padding:2px 7px;white-space:nowrap;
 }
 .note{font-size:12.5px;color:var(--ink-3);margin:0 0 16px}
 code,pre,.mono{font-family:var(--font-mono);font-size:.9em;color:var(--ink-1)}
@@ -328,6 +417,8 @@ svg.chart text{pointer-events:none}   /* mandatory -- see the header comment */
 .hm-6{fill:var(--brand-cyan-ink)}
 .hm-lbl{font-size:11px;font-weight:500;fill:var(--paper)}
 .hm-lbl-d{font-size:11px;font-weight:500;fill:var(--ink)}
+/* a matrix with few enough classes to give each cell 44px or more */
+.cm-big{font-size:15px}
 .mx-lbl{font-size:10.5px;fill:var(--ink-2)}
 
 /* confusion matrix: one set of cells, two ramps, the wrapper picks which is live.
@@ -344,8 +435,8 @@ svg.chart text{pointer-events:none}   /* mandatory -- see the header comment */
 [data-cm="norm"] .nm-6{fill:var(--brand-cyan-ink)}
 #cm-toggle{
   font:500 12px/1 var(--font-sans);color:var(--ink-2);cursor:pointer;
-  background:transparent;border:1px solid var(--rule);border-radius:7px;
-  padding:5px 9px;margin:16px 0 0;
+  background:transparent;border:1px solid var(--rule);
+  padding:6px 10px;margin:16px 0 0;
 }
 #cm-toggle:hover{color:var(--ink);background:var(--hover)}
 
@@ -382,7 +473,7 @@ details{margin:20px 0 0}
 summary{cursor:pointer;font-size:13px;font-weight:500;color:var(--ink-1)}
 pre.cfg{
   max-height:340px;overflow:auto;background:var(--band);padding:12px;
-  border-radius:8px;font-size:12px;line-height:1.5;
+  font-size:12px;line-height:1.5;
 }
 
 /* ---------------------------- stat rows -------------------------------- */
@@ -455,11 +546,15 @@ pre.cfg{
 .anno[aria-checked="true"] .knb{transform:translateX(14px)}
 .anno:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:3px}
 
+/* Five rows of a four-column grid, then scroll. Seven columns of ~128px made every
+   photograph a contact-sheet stamp you could not read without opening it; four columns
+   across the full sheet is ~240px a tile, which is the size the 320px thumbnail was
+   raised to serve. */
 .gal{
   --gal-mask:linear-gradient(to bottom,transparent 0,#000 40px,
               #000 calc(100% - 48px),transparent 100%);
   -webkit-mask-image:var(--gal-mask);mask-image:var(--gal-mask);
-  max-height:352px;overflow-y:auto;overscroll-behavior:contain;
+  max-height:min(1240px,86vh);overflow-y:auto;overscroll-behavior:contain;
   scrollbar-width:none;-ms-overflow-style:none;
 }
 .gal::-webkit-scrollbar{display:none}
@@ -469,19 +564,19 @@ pre.cfg{
 .gal.at-end{--gal-mask:linear-gradient(to bottom,transparent 0,#000 40px,#000 100%)}
 .gal.at-start.at-end{--gal-mask:none}
 .grid{
-  display:grid;grid-template-columns:repeat(7,1fr);gap:6px;
+  display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
   margin:0;padding:0;list-style:none;
 }
-@media (max-width:640px){.grid{grid-template-columns:repeat(5,1fr)}}
-@media (max-width:440px){.grid{grid-template-columns:repeat(4,1fr)}}
+@media (max-width:900px){.grid{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
 .grid figure{
-  position:relative;margin:0;min-width:0;aspect-ratio:1;border-radius:5px;
+  position:relative;margin:0;min-width:0;aspect-ratio:1;
   overflow:hidden;display:block;box-shadow:0 0 0 1px var(--rule);cursor:zoom-in;
   background:var(--band);
 }
 .grid figure:hover{box-shadow:0 0 0 1px var(--ink-3)}
 .grid figure:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:2px}
-.grid img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.grid img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
 .grid .ov{position:absolute;inset:0;display:block;width:100%;height:100%}
 .ov{opacity:0;transition:opacity 120ms ease}
 body[data-anno="on"] .galwrap[data-tab="outcome"] .ov-outcome,
@@ -500,7 +595,7 @@ body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
 /* the one transient blur surface: the hover caption strip (no border, no shadow) */
 .grid figcaption{
   position:absolute;left:0;right:0;bottom:0;padding:3px 5px;
-  font-size:10.5px;line-height:1.4;color:var(--ink-1);text-align:left;
+  font-size:11.5px;line-height:1.4;color:var(--ink-1);text-align:left;
   background:color-mix(in srgb,var(--paper) 82%,transparent);
   -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
   opacity:0;transition:opacity 100ms ease;
@@ -513,7 +608,7 @@ body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
 .galwrap[data-tab="pred"] .lg-pred,
 .galwrap[data-tab="gt"] .lg-gt{display:inline-flex}
 .gal-legend i{display:inline-flex;align-items:center;gap:6px;font-style:normal}
-.sw{width:9px;height:9px;border-radius:2px;flex:none}
+.sw{width:9px;height:9px;flex:none}
 .sw.tp{background:var(--good)}
 .sw.fp{background:var(--serious)}
 .sw.fn{width:11px;height:11px;background:transparent;border:2px dashed var(--warn)}
@@ -524,13 +619,13 @@ body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
 #filterbar{
   position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:50;
   display:flex;gap:12px;align-items:center;font-size:12.5px;color:var(--ink-1);
-  background:var(--paper);border:1px solid var(--rule);border-radius:999px;
+  background:var(--paper);border:1px solid var(--rule);
   padding:6px 8px 6px 16px;box-shadow:0 6px 20px -10px rgba(16,24,32,.4);
 }
 #filterbar[hidden]{display:none}
 #filterclear{
   border:1px solid var(--rule);background:transparent;color:var(--ink-2);
-  border-radius:999px;padding:3px 10px;cursor:pointer;font:400 12px/1.4 var(--font-sans);
+  padding:3px 10px;cursor:pointer;font:400 12px/1.4 var(--font-sans);
 }
 #filterclear:hover{background:var(--hover);color:var(--ink)}
 
@@ -544,21 +639,21 @@ body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
 }
 .lb.on{display:flex}
 .lb-stage{
-  position:relative;background:var(--paper);border-radius:10px;overflow:hidden;
+  position:relative;background:var(--paper);overflow:hidden;
   box-shadow:0 0 0 1px var(--rule),0 26px 60px -34px rgba(16,24,32,.55);
-  width:min(76vw,640px);aspect-ratio:1;
+  width:min(76vw,560px);aspect-ratio:1;
 }
 .lb-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 .lb-stage svg{position:absolute;inset:0;width:100%;height:100%}
 .lb-bar{
-  width:min(76vw,640px);display:flex;align-items:baseline;gap:16px;
+  width:min(76vw,560px);display:flex;align-items:baseline;gap:16px;
   font-size:12.5px;color:var(--ink-2);
 }
 .lb-cap{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lb-n{margin-left:auto;color:var(--ink-3);flex:none}
 .lb-btn{
   background:var(--paper);border:1px solid var(--rule);color:var(--ink-1);
-  border-radius:50%;width:40px;height:40px;cursor:pointer;line-height:1;
+  width:38px;height:38px;cursor:pointer;line-height:1;
   font-size:19px;display:flex;align-items:center;justify-content:center;padding:0;
   box-shadow:0 2px 8px -3px rgba(16,24,32,.3);
 }
@@ -571,7 +666,7 @@ body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
 .tip{
   position:fixed;z-index:90;pointer-events:none;display:none;
   font-size:12px;line-height:1.45;color:var(--ink-1);background:var(--paper);
-  border:1px solid var(--rule);border-radius:6px;padding:5px 8px;max-width:270px;
+  border:1px solid var(--rule);padding:6px 9px;max-width:270px;
   box-shadow:0 2px 10px -4px rgba(16,24,32,.35);font-variant-numeric:tabular-nums;
 }
 
@@ -589,10 +684,12 @@ body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
     --brand-teal-ink:#457F74;--brand-lime-ink:#618B36;
     --good:#0ca30c;--warn:#b57614;--serious:#AD2111}
   body::before{display:none}
-  .nav,.tgl,.lb,.tip,.toc,.banner,#filterbar{display:none!important}
+  .nav,.tgl,.lb,.tip,.toc,.banner,#filterbar,.tail{display:none!important}
   .glass{background:none;border:0;box-shadow:none;backdrop-filter:none;
          -webkit-backdrop-filter:none}
-  .kpis{border-top:1px solid #ccc;border-bottom:1px solid #ccc;border-radius:0}
+  .kpis{border-top:1px solid #ccc;border-bottom:1px solid #ccc}
+  .wrap{padding-left:20px}
+  .read{background:none;border-left:1px solid #ccc}
   .sheet{background:none;padding:0;margin:0;max-width:none}
   .wrap{display:block;max-width:none;padding:0}
   .gal{max-height:none;overflow:visible;-webkit-mask-image:none;mask-image:none}

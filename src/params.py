@@ -345,8 +345,8 @@ args_visualization = {
     "report_intended_use": "",
     "report_out_of_scope": "",
     "report_gallery_per_grid": 24,  # items per gallery grid, regardless of split size
-    "report_max_thumbnails": 200,  # hard cap on unique 192px thumbnails in the report
-    "report_thumbnail_px": 192,  # thumbnail edge in px; JPEG q80, 4:2:0
+    "report_max_thumbnails": 200,  # hard cap on unique 320px thumbnails in the report
+    "report_thumbnail_px": 320,  # thumbnail edge in px; JPEG q78, 4:2:2, lanczos
     # Score above which a false positive joins the "missing annotation" grid: the model
     # is confident and the labels disagree, which is usually the labels.
     "report_high_conf_fp_threshold": 0.7,

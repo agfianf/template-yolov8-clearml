@@ -768,15 +768,23 @@ def confusion(labels: list[str], counts: np.ndarray) -> dict[str, Any]:
         alt[:, -1] = z[:, -1]
 
     n = len(labels)
-    left = min(120.0, max(46.0, 7.0 * max((len(str(x)) for x in labels), default=4)))
+    gutter = min(120.0, max(46.0, 7.0 * max((len(str(x)) for x in labels), default=4)))
     # The viewBox stays the shared width whatever `n` is. Hugging the content instead
     # would let `width:100%` scale a two-class matrix to 660px and print 90px digits.
-    cell = min(33.0, (VB_W - left - 24) / max(n, 1))
+    #
+    # The ceiling on a cell used to be 33px, which is what a 30-class matrix gets anyway.
+    # A five-class one therefore drew 165px of matrix into 660px of canvas and, scaled to
+    # the sheet, came out a quarter the width of every chart around it while three
+    # quarters of its box stood empty. 64px is the largest cell that keeps the printed
+    # count looking like a label rather than a headline, and the matrix is centred in the
+    # leftover width instead of being pinned to the label gutter.
+    cell = min(64.0, (VB_W - gutter - 24) / max(n, 1))
     top = 66.0 if n <= 12 else 84.0
     size = n * cell
+    left = max(gutter, (VB_W - size) / 2)
     chart = _Chart(
         f"Confusion matrix, {n} classes",
-        height=top + size + 34,
+        height=top + size + 58,
         left=left,
         right=left + size,
         top=top,
@@ -794,6 +802,7 @@ def confusion(labels: list[str], counts: np.ndarray) -> dict[str, Any]:
     for i in range(n):
         for j in range(min(n, z.shape[1])):
             chart.add(*_cm_cell(i, j, z, alt, vmax, cell, left, top, label_cells))
+    chart.add(*_ramp_legend(left, top + size + 38, f"{_n(vmax)} detections in one cell"))
     chart.add(_text("axl", left, top + size + 22, "predicted across, actual down"))
     payload = figure_payload(chart.render())
     payload["classes"] = n
@@ -820,19 +829,22 @@ def _cm_cell(
     parts = [
         (
             f'<rect class="hm-{step} nm-{alt_step}" x="{x:.1f}" y="{y:.1f}" '
-            f'width="{cell - 1.5:.1f}" height="{cell - 1.5:.1f}" rx="1.5" '
+            f'width="{cell - 1.5:.1f}" height="{cell - 1.5:.1f}" '
             f'data-tip="{_e(tip)}"></rect>'
         )
     ]
     if not label:
         return parts
     cx, cy = x + (cell - 1.5) / 2, y + cell / 2 + 2
+    # A cell that has room for it prints its number at a size that matches the cell, not
+    # at the 11px every other chart's tick uses.
+    big = " cm-big" if cell >= 44 else ""
     for cls, text, step_now in (
         ("cm-c", _compact(count), step),
         ("cm-n", f"{rate:.2f}", alt_step),
     ):
         shade = "hm-lbl" if step_now >= 5 else "hm-lbl-d"
-        parts.append(_text(f"{cls} {shade}", cx, cy, text, "middle"))
+        parts.append(_text(f"{cls} {shade}{big}", cx, cy, text, "middle"))
     return parts
 
 

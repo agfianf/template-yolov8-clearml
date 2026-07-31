@@ -856,6 +856,9 @@ class _Builder:
                         "classes": list(item.get("classes") or [])[:12],
                         "pairs": list(item.get("pairs") or [])[:6],
                         "outcome": str(item.get("outcome", "mixed")),
+                        # Width over height of the thumbnail, so the overlay viewBox
+                        # letterboxes exactly the way object-fit:contain does.
+                        "ar": _crop_aspect(item),
                         "boxes": _norm_boxes(item)[:MAX_BOXES_PER_ITEM],
                     }
                 )
@@ -864,7 +867,7 @@ class _Builder:
                 "subtitle": subtitle,
                 # The lightbox enlarges these same bytes, and says so in its caption --
                 # so nobody reads the softness as a model artefact.
-                "thumb_px": int(self.cfg.get("report_thumbnail_px", 192)),
+                "thumb_px": int(self.cfg.get("report_thumbnail_px", 320)),
                 "basis": basis.format(conf=f"{display:g}", hi=f"{hi:g}"),
                 "items": items_out,
                 "empty_reason": None if items_out else _empty_reason(gid, cap, hi),
@@ -1567,39 +1570,51 @@ def _boxmask_size_delta(cap: Any) -> tuple[list[str], list[float]]:
     return labels, deltas
 
 
-def _norm_boxes(item: dict) -> list[list]:
-    """Convert native-pixel boxes to thumbnail-normalised 0..1 floats.
+def _crop_aspect(item: dict) -> float:
+    """Width over height of the crop the thumbnail encoder produced, or 1.0."""
+    _, _, cw, ch = _crop_rect(item)
+    return round(cw / ch, 4) if cw > 0 and ch > 0 else 1.0
 
-    The lightbox draws them as percentage-positioned divs over the same base64 the grid
-    shows, so the geometry has to be relative to the *crop*, not the original image.
+
+def _crop_rect(item: dict) -> tuple[float, float, float, float]:
+    """Return the crop as (x, y, w, h) in the original image's pixels.
+
+    Mirrors `ThumbnailStore._crop_box`. It has to: the overlay is drawn over what that
+    encoder produced, so the two have to agree on which pixels those are.
     """
     h, w = (float(v) for v in item.get("ori_shape") or (0, 0))
     focus = item.get("focus")
-    if focus:
-        x0, y0, x1, y1 = (float(v) for v in focus[:4])
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        side = max(max(x1 - x0, y1 - y0) * 1.6, 64.0)
-        side = min(side, max(w, h) or side)
-        half = side / 2
-        cx = min(max(cx, half), max(w - half, half))
-        cy = min(max(cy, half), max(h - half, half))
-        ox0, oy0 = max(cx - half, 0.0), max(cy - half, 0.0)
-        cw, ch = min(cx + half, w) - ox0, min(cy + half, h) - oy0
-    else:
-        ox0, oy0, cw, ch = 0.0, 0.0, w, h
+    if not focus:
+        return 0.0, 0.0, w, h
+    x0, y0, x1, y1 = (float(v) for v in focus[:4])
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    side = max(max(x1 - x0, y1 - y0) * 1.6, 64.0)
+    side = min(side, max(w, h) or side)
+    half = side / 2
+    cx = min(max(cx, half), max(w - half, half))
+    cy = min(max(cy, half), max(h - half, half))
+    ox0, oy0 = max(cx - half, 0.0), max(cy - half, 0.0)
+    return ox0, oy0, min(cx + half, w) - ox0, min(cy + half, h) - oy0
+
+
+def _norm_boxes(item: dict) -> list[list]:
+    """Convert native-pixel boxes to crop-normalised 0..1 floats on each axis.
+
+    The overlay is drawn over the same base64 the grid shows, so the geometry has to be
+    relative to the *crop*, not the original image. It used to be relative to a square
+    letterbox as well, because the encoder padded the crop out to a square; it no longer
+    does, so both axes are simply the crop's own extent and the viewBox carries the
+    aspect ratio instead.
+    """
+    ox0, oy0, cw, ch = _crop_rect(item)
     if cw <= 0 or ch <= 0:
         return []
-    # The thumbnail letterboxes the crop into a square, so both axes share one scale
-    # and the shorter one is centred -- the same arithmetic the encoder used.
-    span = max(cw, ch)
-    pad_x = (span - cw) / 2
-    pad_y = (span - ch) / 2
     out = []
     for box in (item.get("boxes") or [])[:MAX_BOXES_PER_ITEM]:
-        bx0 = (float(box[0]) - ox0 + pad_x) / span
-        by0 = (float(box[1]) - oy0 + pad_y) / span
-        bx1 = (float(box[2]) - ox0 + pad_x) / span
-        by1 = (float(box[3]) - oy0 + pad_y) / span
+        bx0 = (float(box[0]) - ox0) / cw
+        by0 = (float(box[1]) - oy0) / ch
+        bx1 = (float(box[2]) - ox0) / cw
+        by1 = (float(box[3]) - oy0) / ch
         out.append(
             [
                 round(min(max(bx0, 0.0), 1.0), 4),

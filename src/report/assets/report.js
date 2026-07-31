@@ -67,27 +67,31 @@
     pred: { keep: { tp: 1, fp: 1 }, cls: "ob-pred", label: "conf" },
     gt: { keep: { gt: 1, fn: 1 }, cls: "ob-gt", label: "cls" }
   };
-  var LABEL_MIN = 0.17;   /* narrower than this and the number is illegible at 128px */
+  var LABEL_MIN = 0.11;   /* narrower than this and the number is illegible at 240px */
 
-  function layer(boxes, tab) {
+  /* The thumbnail is the crop's own shape, letterboxed by `object-fit:contain` inside a
+     square tile. Giving the overlay the same aspect ratio in its viewBox and letting it
+     `meet` reproduces that letterbox exactly, so the boxes land on the pixels without
+     anybody computing the padding twice. Box coordinates are 0..1 on each axis. */
+  function layer(boxes, tab, ar) {
     var spec = TABS[tab];
+    var vh = 100 / (ar > 0 ? ar : 1);
     var svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", "ov ov-" + tab);
-    svg.setAttribute("viewBox", "0 0 100 100");
-    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("viewBox", "0 0 100 " + vh.toFixed(2));
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
     svg.setAttribute("aria-hidden", "true");
     (boxes || []).forEach(function (b) {
       var kind = b[4];
       if (!spec.keep[kind]) { return; }
-      var w = (b[2] - b[0]) * 100, h = (b[3] - b[1]) * 100;
+      var w = (b[2] - b[0]) * 100, h = (b[3] - b[1]) * vh;
       if (w <= 0 || h <= 0) { return; }
       var rect = document.createElementNS(SVG_NS, "rect");
       rect.setAttribute("class", "ob " + (spec.cls || ("ob-" + kind)));
       rect.setAttribute("x", (b[0] * 100).toFixed(2));
-      rect.setAttribute("y", (b[1] * 100).toFixed(2));
+      rect.setAttribute("y", (b[1] * vh).toFixed(2));
       rect.setAttribute("width", w.toFixed(2));
       rect.setAttribute("height", h.toFixed(2));
-      rect.setAttribute("rx", "1.5");
       svg.appendChild(rect);
       if (!spec.label || (b[2] - b[0]) < LABEL_MIN) { return; }
       var text = spec.label === "conf"
@@ -97,7 +101,7 @@
       var node = document.createElementNS(SVG_NS, "text");
       node.setAttribute("class", "ovt " + (tab === "pred" ? "f-cyan" : "f-teal"));
       node.setAttribute("x", Math.min(b[0] * 100 + 1, 76).toFixed(2));
-      node.setAttribute("y", Math.max(b[1] * 100 - 2, 6.4).toFixed(2));
+      node.setAttribute("y", Math.max(b[1] * vh - 2, 6.4).toFixed(2));
       node.textContent = text;
       svg.appendChild(node);
     });
@@ -110,7 +114,9 @@
     if (!item || fig.dataset.filled) { return; }
     fig.dataset.filled = "1";
     var boxes = item.boxes || [];
-    Object.keys(TABS).forEach(function (tab) { fig.appendChild(layer(boxes, tab)); });
+    Object.keys(TABS).forEach(function (tab) {
+      fig.appendChild(layer(boxes, tab, item.ar));
+    });
   }
 
   var io = new IntersectionObserver(function (entries) {
@@ -270,11 +276,15 @@
     if (!item) { return; }
     lbImg.src = "data:image/jpeg;base64," + (THUMBS[item.thumb] || "");
     lbOvl.textContent = "";
+    /* The stage is square and the image is contained inside it, so the overlay has to
+       letterbox the same way -- same viewBox aspect, same `meet`. */
+    lbOvl.setAttribute("viewBox", "0 0 100 " + (100 / (item.ar > 0 ? item.ar : 1)).toFixed(2));
+    lbOvl.setAttribute("preserveAspectRatio", "xMidYMid meet");
     if (ANNO) {
       var tab = "outcome";
       var wrap = document.querySelector('.galwrap[data-gid="' + gid + '"]');
       if (wrap && wrap.dataset.tab) { tab = wrap.dataset.tab; }
-      var built = layer(item.boxes, tab);
+      var built = layer(item.boxes, tab, item.ar);
       while (built.firstChild) { lbOvl.appendChild(built.firstChild); }
     }
     lbCap.textContent = item.label + " - " + grid.basis + " - " +
@@ -335,33 +345,85 @@
     }
   });
 
-  /* --- active section, on both link sets ------------------------------------------ */
-  /* The TOC is hidden below 1400px, and on a 1280-wide laptop that left a thirteen-
-     section report with no position marker at all -- so the nav links track too. */
+  /* --- contents: the panel, and which entry is current ---------------------------- */
+  /* This was an IntersectionObserver over a band across the top of the viewport, which
+     has one failure it cannot see its way out of: a section that is never tall enough,
+     or never high enough up the document, to enter that band is never nominated. At the
+     foot of the page that is every remaining section at once, so the last two entries
+     could be clicked but never became current. Measuring position directly has no such
+     edge -- the current section is simply the last one whose top has passed the header,
+     and at the very bottom of the document it is the last section, full stop. */
   (function () {
-    var links = [].slice.call(document.querySelectorAll(".toc a, .nav-links a"));
-    if (!links.length || !window.IntersectionObserver) { return; }
-    var ids = [].slice.call(document.querySelectorAll(".toc a")).map(function (a) {
-      return a.getAttribute("href").slice(1);
+    var toc = document.getElementById("toc");
+    var btn = document.getElementById("tocbtn");
+    var links = toc ? [].slice.call(toc.querySelectorAll("a")) : [];
+    if (!links.length) { return; }
+
+    function close() {
+      if (!toc.classList.contains("open")) { return; }
+      toc.classList.remove("open");
+      if (btn) { btn.setAttribute("aria-expanded", "false"); }
+    }
+    if (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = !toc.classList.contains("open");
+        /* Anchored to the header's real bottom edge: the escape-hatch banner scrolls
+           away above it, so a fixed offset would leave a gap at the top of the page. */
+        var head = document.querySelector(".nav");
+        if (head) {
+          toc.style.setProperty("--toc-top",
+            Math.max(head.getBoundingClientRect().bottom, 0) + 8 + "px");
+        }
+        toc.classList.toggle("open", open);
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      document.addEventListener("click", function (e) {
+        if (!toc.contains(e.target)) { close(); }
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { close(); }
+      });
+      links.forEach(function (a) { a.addEventListener("click", close); });
+    }
+
+    var sections = links.map(function (a) {
+      return document.getElementById(a.getAttribute("href").slice(1));
     });
-    var seen = {};
+    var current = null;
     function paint() {
-      var id = ids.filter(function (s) { return seen[s]; })[0] || ids[0];
-      links.forEach(function (a) {
-        var on = a.getAttribute("href").slice(1) === id;
-        a.classList.toggle("on", on);
-        if (on) { a.setAttribute("aria-current", "true"); }
+      /* Has to sit below the resting place of a clicked link, which CSS puts at
+         `scroll-padding-top` -- nav height plus 20. The slack absorbs the sub-pixel
+         difference between that and where the scroll actually lands; without it a click
+         can leave its own target one pixel short of counting as arrived. */
+      var edge = 0;
+      var head = document.querySelector(".nav");
+      if (head) { edge = head.getBoundingClientRect().bottom + 30; }
+      var at = 0;
+      var bottom = window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 4;
+      if (bottom) {
+        at = sections.length - 1;
+      } else {
+        for (var i = 0; i < sections.length; i++) {
+          if (sections[i] && sections[i].getBoundingClientRect().top <= edge) { at = i; }
+        }
+      }
+      if (at === current) { return; }
+      current = at;
+      links.forEach(function (a, i) {
+        a.classList.toggle("on", i === at);
+        if (i === at) { a.setAttribute("aria-current", "true"); }
         else { a.removeAttribute("aria-current"); }
       });
     }
-    var obs = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
-      paint();
-    }, { rootMargin: "-56px 0px -62% 0px" });
-    ids.forEach(function (s) {
-      var node = document.getElementById(s);
-      if (node) { obs.observe(node); }
-    });
+    /* Called straight from the scroll handler rather than deferred to an animation
+       frame. Thirteen getBoundingClientRect reads against a layout the scroll did not
+       invalidate is not worth throttling, and requestAnimationFrame does not fire at all
+       while the document is not being painted -- which for this report includes sitting
+       in a ClearML Debug Samples iframe nobody has scrolled into view yet. */
+    addEventListener("scroll", paint, { passive: true });
+    addEventListener("resize", paint);
     paint();
   })();
 

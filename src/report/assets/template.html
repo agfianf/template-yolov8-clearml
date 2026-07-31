@@ -21,12 +21,20 @@
         <span class="brand-run">{{RUN_NAME}}</span>
       </span>
     </span>
-    <nav class="nav-links" aria-label="Sections">{{NAV}}</nav>
+    <span class="nav-spacer"></span>
+    <!-- Only ever visible where the floating TOC is not: it opens the same list as a
+         panel rather than duplicating it as a second row of links. -->
+    <button class="tgl toc-btn" id="tocbtn" type="button"
+            aria-expanded="false" aria-controls="toc">Contents</button>
     <button class="tgl" id="theme" type="button" title="Toggle light / dark">Theme</button>
   </div>
 </header>
-<nav class="toc" aria-label="Sections">{{TOC}}</nav>
+<nav class="toc" id="toc" aria-label="Sections">{{TOC}}</nav>
 <div class="wrap"><main class="sheet">{{SECTIONS}}</main></div>
+<!-- Lets the last section scroll to the top of the viewport like every other one. A
+     document that ends at its last section can never put that section under the header,
+     so the contents list could highlight it but never actually reach it. -->
+<div class="tail" aria-hidden="true"></div>
 <div id="filterbar" hidden><span id="filtertext"></span><button id="filterclear" type="button">Clear filter</button></div>
 <div class="lb" id="lb" aria-hidden="true">
   <button class="lb-btn x" id="lbclose" type="button" aria-label="Close">&times;</button>
