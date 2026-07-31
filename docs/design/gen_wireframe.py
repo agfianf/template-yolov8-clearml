@@ -117,9 +117,9 @@ body::before{
 }
 .nav-in{
   max-width:var(--col-full);margin:0 auto;padding:0 20px;height:100%;
-  display:flex;align-items:center;gap:18px;
+  display:flex;align-items:center;gap:14px;
 }
-.brandmark{display:flex;align-items:center;gap:9px;min-width:0;flex:none}
+.brandmark{display:flex;align-items:center;gap:9px;min-width:0;flex:0 1 auto}
 .brandmark .dot{
   width:16px;height:16px;border-radius:5px;background:var(--brand-grad);flex:none;
 }
@@ -133,13 +133,13 @@ body::before{
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .nav-links{
-  margin-left:auto;display:flex;align-items:center;gap:15px;min-width:0;
+  margin-left:auto;display:flex;align-items:center;gap:13px;min-width:0;
   height:100%;overflow-x:auto;overflow-y:hidden;
   scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;
 }
 .nav-links::-webkit-scrollbar{display:none}
 .nav-links a{
-  font-size:12.5px;color:var(--ink-2);text-decoration:none;white-space:nowrap;
+  font-size:12px;color:var(--ink-2);text-decoration:none;white-space:nowrap;
   flex:none;padding:17px 0;
 }
 .nav-links a:hover{color:var(--ink)}
@@ -149,6 +149,28 @@ body::before{
   padding:5px 9px;flex:none;
 }
 .tgl:hover{color:var(--ink);background:var(--hover)}
+
+/* ---------------------------- floating TOC ----------------------------- */
+/* transparent by construction: no background, no border, no blur, no box.  */
+.toc{
+  display:none;position:fixed;z-index:30;
+  top:50%;transform:translateY(-50%);
+  /* sit in the gutter, tracking the left edge of the column as it grows */
+  left:max(12px,calc(50% - var(--col-full)/2 - 166px));
+  width:150px;
+}
+.toc a{
+  display:block;position:relative;padding-left:12px;
+  font-size:12px;line-height:1.9;color:var(--ink-3);text-decoration:none;
+}
+.toc a:hover{color:var(--ink-2)}
+.toc a.on{color:var(--ink);font-weight:500}
+.toc a.on::before{
+  content:"";position:absolute;left:0;top:.42em;width:2px;height:1em;
+  background:var(--brand-grad);
+}
+.toc a:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:2px}
+@media (min-width:1400px){.toc{display:block}}
 
 /* ---------------------------- shell ----------------------------------- */
 .wrap{max-width:var(--col-full);margin:0 auto;padding:0 20px}
@@ -173,6 +195,12 @@ p{margin:0 0 16px}
 .lede{color:var(--ink-1)}
 .meta{font-size:12.5px;color:var(--ink-3);line-height:1.7;margin:0}
 .meta b{font-weight:500;color:var(--ink-2)}
+/* experiment tags: identifiers, not a taxonomy -- no border, no per-tag colour */
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px;padding:0;list-style:none}
+.tags li{
+  font-size:11px;line-height:1.5;color:var(--ink-2);background:var(--band);
+  border-radius:4px;padding:2px 7px;white-space:nowrap;
+}
 .dense{font-size:14px}
 .note{font-size:12.5px;color:var(--ink-3);margin:0 0 16px}
 code,.mono{
@@ -214,8 +242,18 @@ section + section{margin-top:24px}
   .kpi:nth-child(3n+1){border-left:0;padding-left:0}
 }
 
+/* ---------------------------- highlights ------------------------------- */
+/* the same flat register as .flags, one notch quieter: no dot, no colour.   */
+.hl{margin:14px 0 0;padding:0;list-style:none}
+.hl li{
+  font-size:13.5px;line-height:1.55;padding:8px 0;color:var(--ink-1);
+  border-top:1px solid var(--rule-2);font-variant-numeric:tabular-nums;
+}
+.hl li:first-child{border-top:0}
+.hl b{font-weight:500;color:var(--ink)}
+
 /* ---------------------------- flags ----------------------------------- */
-.flags{margin:26px 0 0;padding:0;list-style:none}
+.flags{margin:14px 0 0;padding:0;list-style:none}
 .flags li{
   display:flex;gap:9px;align-items:baseline;font-size:13px;line-height:1.5;
   padding:8px 0;border-top:1px solid var(--rule-2);color:var(--ink-1);
@@ -345,6 +383,22 @@ td .ex{display:block;width:40px;height:26px}
 @media (max-width:640px){
   .statcol{flex:1 1 100%;border-left:0;padding:0;margin-top:14px}
   .statcol:first-child{margin-top:0}
+}
+/* environment variant: label rail on the left, value flows -- still no box */
+.statrow.env .statcol{flex:1.3 1 320px;min-width:300px;padding:0 16px}
+.statrow.env .statcol:nth-child(2){flex:1.05 1 290px;min-width:270px}
+.statrow.env .statcol.chart-col{flex:.95 1 260px;min-width:250px}
+.statrow.env .statcol:first-child{padding-left:0}
+.statrow.env .statcol:last-child{padding-right:0}
+.statrow.env .stat-l{justify-content:flex-start;gap:10px;align-items:baseline}
+.statrow.env .stat-l > span{flex:0 0 100px;color:var(--ink-2)}
+.statrow.env .stat-l b{font-weight:500;min-width:0}
+.statrow.env .stat-l b .u{color:var(--ink-3);font-weight:400}
+.statrow.env .nb{white-space:nowrap}
+@media (max-width:1080px){
+  .statrow.env .statcol.chart-col{
+    flex:1 1 100%;border-left:0;padding-left:0;margin-top:18px;
+  }
 }
 
 /* ---------------------------- gallery ---------------------------------- */
@@ -513,7 +567,7 @@ td .ex{display:block;width:40px;height:26px}
         --brand-teal-ink:#457F74;--brand-lime-ink:#618B36;
         --good:#0ca30c;--warn:#b57614;--serious:#AD2111}
   body::before{display:none}
-  .nav,.tgl,.lb,.tip{display:none!important}
+  .nav,.tgl,.lb,.tip,.toc{display:none!important}
   .glass{background:none;border:0;box-shadow:none;backdrop-filter:none;
          -webkit-backdrop-filter:none}
   .kpis{border-top:1px solid #ccc;border-bottom:1px solid #ccc;border-radius:0}
@@ -1031,6 +1085,48 @@ def chart_mp():
 
 
 # --------------------------------------------------------------------------
+# Chart 10 -- seconds per epoch (three epochs is a thin chart; do not pad it)
+# --------------------------------------------------------------------------
+EPOCHS = [("1", 439), ("2", 408), ("3", 417)]
+
+
+def _ms(sec):
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+def chart_epochs():
+    X0, X1 = 44, 218
+    vmax = 480.0
+    sx = lambda v: X0 + (v / vmax) * (X1 - X0)
+    bh, gap, top = 17, 13, 12
+    n = len(EPOCHS)
+    ybot = top + n * bh + (n - 1) * gap + 4
+    s = ['<svg class="chart" viewBox="0 0 275 %d" role="img" '
+         'aria-label="Seconds per epoch: epoch 1 7:19, epoch 2 6:48, epoch 3 6:57">'
+         % (ybot + 36)]
+    for t in (0, 120, 240, 360, 480):
+        x = sx(t)
+        s.append(f'<line class="gl{"" if t == 0 else "-2"}" x1="{x:.1f}" y1="{top-7}" '
+                 f'x2="{x:.1f}" y2="{ybot}"/>')
+        s.append(f'<text class="tk" x="{x:.1f}" y="{ybot+14}" text-anchor="middle">'
+                 f'{t // 60}</text>')
+    for i, (name, sec) in enumerate(EPOCHS):
+        y = top + i * (bh + gap)
+        w = max(sx(sec) - X0, 1.5)
+        tip = f"epoch {name} &#183; {sec} s &#183; {_ms(sec)}"
+        s.append(f'<rect class="f-cyan" x="{X0:.1f}" y="{y}" width="{w:.1f}" '
+                 f'height="{bh}" rx="2" data-tip="{tip}"><title>{tip}</title></rect>')
+        s.append(f'<text class="b-lbl" x="{X0-9}" y="{y+bh/2+4:.0f}" '
+                 f'text-anchor="end">epoch {name}</text>')
+        s.append(f'<text class="dl f-cyan" x="{X0+w+8:.1f}" y="{y+bh/2+4:.0f}">'
+                 f'{_ms(sec)}</text>')
+    s.append(f'<text class="axl" x="{X0}" y="{ybot+32}">minutes &#183; '
+             'labels are m:ss</text>')
+    s.append("</svg>")
+    return "\n".join(s)
+
+
+# --------------------------------------------------------------------------
 # Gallery placeholder tiles
 # --------------------------------------------------------------------------
 def blobs(seed, n=9):
@@ -1183,6 +1279,7 @@ KPIS = [
 
 SECTIONS = [
     ("s-summary", "Summary"),
+    ("s-highlights", "Highlights"),
     ("s-model-card", "Model card"),
     ("s-dataset", "Dataset"),
     ("s-per-class", "Per-class"),
@@ -1190,7 +1287,50 @@ SECTIONS = [
     ("s-tide", "Errors"),
     ("s-strata", "Size &amp; shape"),
     ("s-galleries", "Galleries"),
+    ("s-environment", "Environment"),
     ("s-caveats", "Caveats"),
+]
+
+# Read at report time -- the end of the run -- so this is the final tag state.
+TAGS = ["image:0.2.11", "ul-8.4.110", "detect", "yolo11n", "CVAT", "baseline",
+        "fruitlet"]
+
+# Every line states what was measured. Nothing here interprets, diagnoses or
+# recommends: each is checkable against a figure further down.
+HIGHLIGHTS = [
+    "<b>Two</b> classes, <b>21,305</b> instances. <b>stack</b> carries "
+    "<b>58</b> of them and none landed in the test split.",
+    "Background is the largest error type: <b>35,010</b> detections, "
+    "&#916;AP50 <b>0.2527</b>, against a baseline AP50 of <b>0.1354</b>.",
+    "F1 peaks at conf <b>0.000</b> and falls monotonically from there.",
+    "<b>618</b> images across <b>6</b> sensor sizes; the median frame is "
+    "<b>12.2&#8239;MP</b>, about <b>30&#215;</b> the pixel budget at "
+    "imgsz&#8239;640.",
+    "Objects per image runs from <b>1</b> to <b>146</b>, median <b>20</b>.",
+    "<b>3</b> epochs on a <b>90%</b> fraction, <b>166</b> images in the test "
+    "split.",
+]
+
+ENV_WHERE = [
+    ("Worker", 'gpu-server2 / <span class="nb">NEW-gpu-machine-server2</span>'),
+    ("Host", "ml-node-02"),
+    ("GPU", '<span class="nb">NVIDIA RTX A5000</span> <span class="u">'
+            '&#183; 24&#8239;GB <span class="nb">&#183; 1 of 2 visible</span></span>'),
+    ("CUDA / driver", "12.4 <span class=\"u\">&#183; 550.90.07</span>"),
+    ("Torch / Python", "2.6.0+cu124 <span class=\"u\">&#183; 3.14.0</span>"),
+    ("Image", '<span class="mono">yolo-trainer:0.2.11</span>'),
+]
+
+ENV_LONG = [
+    ("Started", "2026-07-31 05:41:12 <span class=\"u\">UTC</span>"),
+    ("Finished", "2026-07-31 06:05:38 <span class=\"u\">UTC</span>"),
+    ("Wall clock", "24 min 26 s"),
+    ("Training", '<span class="nb">21 min 04 s</span> '
+                  '<span class="u nb">over 3 epochs</span>'),
+    ("Mean epoch", '<span class="nb">7 min 01 s</span> <span class="u">'
+                   '<span class="nb">&#183; min 6:48</span> '
+                   '<span class="nb">&#183; max 7:19</span></span>'),
+    ("Final validation", "1 min 12 s"),
 ]
 
 QUALITY = [
@@ -1236,6 +1376,30 @@ JS = """
     r.setAttribute('data-theme', cur() === 'dark' ? 'light' : 'dark');
     if (LB.classList.contains('on')) draw(idx);
   });
+})();
+
+/* ---- floating TOC: active section via IntersectionObserver ---- */
+(function () {
+  var links = [].slice.call(document.querySelectorAll('.toc a'));
+  if (!links.length || !window.IntersectionObserver) { return; }
+  var seen = {};
+  function paint() {
+    var on = links.filter(function (a) { return seen[a.hash.slice(1)]; })[0] || links[0];
+    links.forEach(function (a) {
+      a.classList.toggle('on', a === on);
+      if (a === on) { a.setAttribute('aria-current', 'true'); }
+      else { a.removeAttribute('aria-current'); }
+    });
+  }
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+    paint();
+  }, { rootMargin: '-56px 0px -62% 0px' });
+  links.forEach(function (a) {
+    var el = document.getElementById(a.hash.slice(1));
+    if (el) { io.observe(el); }
+  });
+  paint();
 })();
 
 /* ---- cursor-following tooltip; the printed direct labels stay as they are ---- */
@@ -1385,6 +1549,15 @@ if (/^#lb=\\d+$/.test(location.hash)) { open_(+location.hash.slice(4) - 1); }
 def build():
     kpi_html = "\n".join(kpi_cell(*k) for k in KPIS)
     nav_links = "\n".join(f'      <a href="#{i}">{t}</a>' for i, t in SECTIONS)
+    toc_links = "\n".join(f'  <a href="#{i}">{t}</a>' for i, t in SECTIONS)
+    tags_html = "\n".join(f'        <li>{t}</li>' for t in TAGS)
+    hl_html = "\n".join(f'        <li>{h}</li>' for h in HIGHLIGHTS)
+
+    def env_rows(rows):
+        return "\n".join(f'          <p class="stat-l"><span>{k}</span>'
+                         f'<b>{v}</b></p>' for k, v in rows)
+
+    env_where, env_long = env_rows(ENV_WHERE), env_rows(ENV_LONG)
 
     gal_html = "\n".join(
         f'            <div class="thumb"><button class="ph" type="button" '
@@ -1434,11 +1607,18 @@ def build():
   </div>
 </header>
 
+<nav class="toc" id="toc" aria-label="Sections">
+{toc_links}
+</nav>
+
 <div class="wrap">
   <article class="sheet">
 
     <section id="s-summary">
       <h1>yolo-train report-e2e (detect)</h1>
+      <ul class="tags" aria-label="Experiment tags">
+{tags_html}
+      </ul>
       <p class="meta"><b>yolo11n.pt</b> &#183; imgsz 640 &#183; split <b>test</b>
       (166 images) &#183; 3 epochs &#183; generated 2026-07-31 06:05 UTC &#183;
       commit <span class="mono">46de57c</span> &#183;
@@ -1447,7 +1627,15 @@ def build():
       <div class="kpis glass wide">
 {kpi_html}
       </div>
+    </section>
 
+    <section id="s-highlights">
+      <h2>Highlights</h2>
+      <ul class="hl">
+{hl_html}
+      </ul>
+
+      <h2 style="margin-top:36px">Warnings</h2>
       <ul class="flags">
         <li><span class="sd serious" aria-hidden="true"></span>
           <span><b>stack</b> has no ground truth in the test split &#8212; the class is
@@ -1763,6 +1951,32 @@ def build():
           </span>
         </p>
       </div>
+    </section>
+
+    <section id="s-environment">
+      <h2>Environment</h2>
+      <p>Where this run executed and how long it took. The machine facts are read
+      locally on the agent; the worker id and the start timestamp come from the
+      ClearML task, and any field that cannot be read prints
+      <span class="mono">unknown</span> rather than disappearing.</p>
+
+      <div class="statrow env wide">
+        <div class="statcol">
+          <p class="stat-h">Where</p>
+{env_where}
+        </div>
+        <div class="statcol">
+          <p class="stat-h">How long</p>
+{env_long}
+        </div>
+        <div class="statcol chart-col">
+          <p class="stat-h">Seconds per epoch</p>
+          {chart_epochs()}
+        </div>
+      </div>
+      <p class="note" style="margin-top:14px">Wall clock covers the whole task,
+      including the dataset download and the export; the training figure covers
+      the fit loop only.</p>
     </section>
 
     <section id="s-caveats">
