@@ -20,6 +20,7 @@ it. Pin `class_names` before fine-tuning on top of an existing checkpoint.
 
 import json
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from src.utils.logging import Tally, get_logger
@@ -40,6 +41,25 @@ def _key(name: str) -> str:
     everyone except a dict lookup.
     """
     return name.strip().lower()
+
+
+def _preferred_spelling(counts: Counter[str]) -> str:
+    """Pick which spelling of a label to display, independent of source order.
+
+    `Speed_Limit` and `speed_limit` are the same class here, but only one of
+    them can be written into `data.yaml`. Taking whichever appeared first would
+    make the *name* depend on the order sources were listed in, which is exactly
+    the property the sorted union exists to avoid. Most common wins instead,
+    ties broken alphabetically, so the answer is a function of the data.
+    """
+    if len(counts) > 1:
+        logger.warning(
+            "label spelled %d ways across sources: %s -- CVAT treats these as "
+            "different labels, this pipeline does not",
+            len(counts),
+            ", ".join(f"{name} x{n}" for name, n in counts.most_common()),
+        )
+    return min(counts, key=lambda name: (-counts[name], name))
 
 
 def read_category_names(json_path: str) -> list[str]:
@@ -109,12 +129,15 @@ def build_class_map(
         names = [n.strip() for n in explicit_names if n.strip()]
         source = "pinned"
     else:
-        # First spelling seen wins for display; matching is case-insensitive.
-        seen: dict[str, str] = {}
+        # Sorted union. Sorting is the whole point: the order must not depend on
+        # which source was listed first, which one CVAT happens to return first,
+        # or which one is missing a label -- otherwise adding a task to the
+        # config would renumber the classes.
+        spellings: dict[str, Counter[str]] = defaultdict(Counter)
         for path in annotation_paths:
             for name in read_category_names(path):
-                seen.setdefault(_key(name), name.strip())
-        names = [seen[k] for k in sorted(seen)]
+                spellings[_key(name)][name.strip()] += 1
+        names = [_preferred_spelling(spellings[k]) for k in sorted(spellings)]
         source = "derived"
 
     names = [n for n in names if _key(n) not in excluded]

@@ -89,6 +89,37 @@ def test_matching_ignores_case_and_whitespace(write_project, annotation_path) ->
     assert class_map.index_of("SPEED_LIMIT") == class_map.index_of("speed_limit")
 
 
+def test_the_displayed_spelling_does_not_depend_on_source_order(
+    write_project, annotation_path
+) -> None:
+    """Which spelling reaches data.yaml is a function of the data, not of order.
+
+    Two sources spell it `speed_limit` and one spells it `Speed_Limit`. Taking
+    whichever came first would make the class *name* depend on the order the
+    task ids were typed in -- the exact property sorting the union removes.
+    """
+    a = write_project("a", ["Speed_Limit", "car"])
+    b = write_project("b", ["speed_limit", "car"])
+    c = write_project("c", ["speed_limit", "car"])
+    paths = [annotation_path(p) for p in (a, b, c)]
+
+    forwards = build_class_map(paths)
+    backwards = build_class_map(paths[::-1])
+
+    assert forwards.names == backwards.names == ["car", "speed_limit"]
+
+
+def test_a_tie_in_spelling_is_broken_alphabetically(
+    write_project, annotation_path
+) -> None:
+    a = write_project("a", ["Speed_Limit"])
+    b = write_project("b", ["speed_limit"])
+    paths = [annotation_path(a), annotation_path(b)]
+
+    # One each: alphabetical, so the answer is still order-independent.
+    assert build_class_map(paths).names == build_class_map(paths[::-1]).names
+
+
 def test_empty_map_is_an_error(write_project, annotation_path) -> None:
     a = write_project("a", ["stalk"])
 
