@@ -70,23 +70,6 @@ test_fast:
 test_report:
 	PYTHONPATH=. uv run pytest tests/report -v
 
-# Re-fetch the vendored plotly bundle. The file is COMMITTED -- this target exists to
-# prove it is reproducible, not to run on every build. plotly.py 6.9.0 ships only the
-# full 4.85 MB bundle inside the wheel, and `include_plotlyjs=True` would put all of it
-# in every report; the cartesian build is 1.42 MB and covers every trace type used.
-# Bump both the version and the checksum together, never one alone.
-PLOTLY_JS_VERSION := 3.7.0
-PLOTLY_JS_SHA256 := 7c593b9eda0e74a1d07335cf89cbf7a55ffc114909980c3729af835453bdb02a
-PLOTLY_JS_PATH := src/report/assets/plotly-cartesian.min.js
-
-fetch-plotlyjs:
-	curl -fsSL -o $(PLOTLY_JS_PATH).tmp \
-	https://cdn.jsdelivr.net/npm/plotly.js-cartesian-dist-min@$(PLOTLY_JS_VERSION)/plotly-cartesian.min.js
-	echo "$(PLOTLY_JS_SHA256)  $(PLOTLY_JS_PATH).tmp" | sha256sum -c -
-	mv $(PLOTLY_JS_PATH).tmp $(PLOTLY_JS_PATH)
-	@echo "$(PLOTLY_JS_PATH) verified at $(PLOTLY_JS_VERSION)"
-
-
 # Must mirror the Dockerfile's `uv sync --frozen --no-dev`: this file is fed to
 # Task.add_requirements(), so it defines the env a non-docker agent rebuilds.
 # Do NOT add --resolution lowest-direct; that exports floor versions, not locked ones.

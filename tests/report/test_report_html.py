@@ -92,8 +92,19 @@ class TestSelfContained:
         document = render_report(det_blob)
 
         assert "<link" not in document
-        assert "Plotly" in document  # the bundle itself, not a script src
         assert 'class="sortable"' in document
+        assert '<svg class="chart"' in document  # the figures, drawn into the document
+
+    def test_no_chart_library_ships_at_all(self, det_blob):
+        """The figures are hand-authored SVG, so there is nothing to vendor any more.
+
+        This used to be a 1.42 MB plotly bundle and two thirds of the file. It is gone,
+        and the report has no runtime chart dependency to reintroduce by accident.
+        """
+        document = render_report(det_blob)
+
+        assert "Plotly" not in document
+        assert "plotly" not in document
 
     def test_banner_href_is_empty(self, det_blob):
         """`href=""` resolves to this document's own URL -- the sandboxed-iframe escape.
@@ -106,24 +117,30 @@ class TestSelfContained:
         assert re.search(r'<a class="banner" href=""', document)
 
 
-class TestPlotlyContainerRules:
-    """A Plotly div in a hidden container renders zero-width and never recovers."""
+class TestCollapsedAppendix:
+    """A collapsed <details> used to mean a figure that never rendered; now it cannot.
 
-    def test_no_plotly_div_inside_details_without_the_lazy_marker(self, seg_blob):
+    Plotly drew zero-width inside a hidden container and never recovered, which is why
+    the training appendix carried a `lazy` marker and observed its own figures on
+    `toggle`. Inline SVG has no such failure mode: the figure is in the document whether
+    the appendix is open or not, which is what these two assert.
+    """
+
+    def test_the_collapsed_appendix_still_contains_its_drawn_figures(self, seg_blob):
         document = markup_only(render_report(seg_blob))
-        for block in re.findall(
-            r"<details\b([^>]*)>(.*?)</details>", document, re.DOTALL
-        ):
-            attrs, body = block
-            if "data-fig" in body:
-                assert "lazy" in attrs, "a figure sits in a <details> with no lazy marker"
+        blocks = re.findall(r"<details\b[^>]*>(.*?)</details>", document, re.DOTALL)
+        with_figures = [b for b in blocks if "data-fig" in b]
 
-    def test_the_lazy_details_is_the_training_appendix_only(self, seg_blob):
+        assert len(with_figures) == 1, "only the training appendix collapses a figure"
+        assert "f_val_map" in with_figures[0]
+        assert '<svg class="chart"' in with_figures[0]
+
+    def test_no_lazy_marker_survives(self, seg_blob):
+        """The marker existed only for Plotly; leaving it would imply it still matters."""
         document = markup_only(render_report(seg_blob))
-        lazy = re.findall(r'<details class="lazy">(.*?)</details>', document, re.DOTALL)
 
-        assert len(lazy) == 1
-        assert "f_val_map" in lazy[0]
+        assert 'class="lazy"' not in document
+        assert "details.lazy" not in document
 
     def test_sections_carry_the_content_visibility_pair(self, det_blob):
         """`content-visibility` without `contain-intrinsic-size` makes the page jump."""
@@ -173,39 +190,195 @@ class TestNotApplicableIsNotMissing:
 
 
 class TestTideFigureLayout:
-    """The stacked bar's annotations and legend must not overprint each other."""
+    """The stacked bar's labels and its two ceilings must not overprint each other."""
 
-    def test_legend_order_matches_the_segment_order(self, det_blob):
-        """A horizontal stacked bar reverses its legend by default; Cls must lead."""
-        fig = det_blob["figures"]["f_tide"]
+    def _svg(self, blob):
+        return blob["figures"]["f_tide"]["svg"]
 
-        assert [t["name"] for t in fig["data"]] == [
-            "Cls",
-            "Loc",
-            "Both",
-            "Dupe",
-            "Bkg",
-            "Miss",
+    def test_segments_are_drawn_largest_first(self, det_blob):
+        """Left to right by size, so the bar reads as a ranking and not as an order."""
+        svg = self._svg(det_blob)
+        drawn = re.findall(r'data-tip="([A-Za-z]+) \u00b7', svg)
+
+        assert drawn, "no segment carried a tooltip"
+        widths = [
+            float(m)
+            for m in re.findall(
+                r'class="f-[a-z0-9]+" x="[\d.]+" y="48.0" width="([\d.]+)"', svg
+            )
         ]
-        assert fig["layout"]["legend"]["traceorder"] == "normal"
+        assert widths == sorted(widths, reverse=True)
 
-    def test_ceiling_annotations_are_staggered(self, det_blob):
-        """The two ceilings sit close in x, so they are separated in y and by anchor."""
-        layout = det_blob["figures"]["f_tide"]["layout"]
-        annotations = [
-            a for a in layout.get("annotations", []) if "removed" in a.get("text", "")
-        ]
+    def test_ceiling_labels_are_staggered(self, det_blob):
+        """The two ceilings land within a hundredth of each other on the same axis."""
+        svg = self._svg(det_blob)
+        labels = re.findall(
+            r'<text class="dl f-peer" x="[\d.]+" y="([\d.]+)" text-anchor="(\w+)">', svg
+        )
 
-        assert len(annotations) == 2
-        assert annotations[0]["yshift"] != annotations[1]["yshift"]
-        assert annotations[0]["xanchor"] != annotations[1]["xanchor"]
+        assert len(labels) == 2
+        assert labels[0][0] != labels[1][0], "the two labels share a y"
+        assert labels[0][1] != labels[1][1], "the two labels run the same way"
 
-    def test_legend_clears_the_axis_title(self, det_blob):
-        """Bottom margin has to hold the axis title *and* the legend row under it."""
-        layout = det_blob["figures"]["f_tide"]["layout"]
+    def test_the_thin_tail_gets_one_leader_below_the_tick_row(self):
+        """Sub-pixel segments share one leader, and its elbow clears the axis labels.
 
-        assert layout["margin"]["b"] >= 100
-        assert layout["legend"]["y"] < -0.3
+        Driven straight from the shape that produces a tail -- one error type carrying
+        most of the delta and three carrying almost none -- because a synthetic run with
+        six comparable segments never draws a leader at all.
+        """
+        from src.report import figures
+
+        svg = figures.tide_bar(
+            {
+                "mode": "delta_ap",
+                "types": ["Cls", "Loc", "Both", "Dupe", "Bkg", "Miss"],
+                "delta_ap": {
+                    "Cls": 0.0001,
+                    "Loc": 0.0786,
+                    "Both": 0.0061,
+                    "Dupe": 0.0005,
+                    "Bkg": 0.2527,
+                    "Miss": 0.0970,
+                },
+                "counts": {
+                    "Cls": 517,
+                    "Loc": 10291,
+                    "Both": 1219,
+                    "Dupe": 409,
+                    "Bkg": 35010,
+                    "Miss": 1703,
+                },
+                "ceilings": {"fp": 0.45, "fn": 0.097},
+            }
+        )
+        leader = re.search(r'<path class="lead" d="M[\d.]+ \d+ L[\d.]+ (\d+)', svg)
+        ticks = [float(y) for y in re.findall(r'class="tk" x="[\d.]+" y="([\d.]+)"', svg)]
+        tail = re.findall(r'<text class="dl f-ink2" x="[\d.]+" y="[\d.]+">', svg)
+
+        assert leader, "the thin segments were left with no leader at all"
+        assert ticks, "the axis printed no ticks to clear"
+        assert float(leader.group(1)) > max(ticks)
+        assert len(tail) == 3, "one label per unlabelled segment, and no more"
+
+    def test_the_bar_stays_inside_the_viewbox(self):
+        """The stack is drawn end to end, so the axis has to cover its sum.
+
+        Scaling to the largest segment instead ran a bar of six comparable errors four
+        viewBox widths off the canvas, with every label past the right edge.
+        """
+        from src.report import figures
+
+        even = dict.fromkeys(["Cls", "Loc", "Both", "Dupe", "Bkg", "Miss"], 0.08)
+        svg = figures.tide_bar(
+            {
+                "mode": "delta_ap",
+                "types": list(even),
+                "delta_ap": even,
+                "counts": dict.fromkeys(even, 100),
+                "ceilings": {"fp": 0.2, "fn": 0.1},
+            }
+        )
+        width = float(re.search(r'viewBox="0 0 (\d+)', svg).group(1))
+        right = max(
+            float(m.group(1)) + float(m.group(2))
+            for m in re.finditer(
+                r'<rect class="f-[a-z0-9]+" x="([\d.]+)" y="48.0" '
+                r'width="([\d.]+)"',
+                svg,
+            )
+        )
+
+        assert right <= width
+
+
+class TestImageFileSection:
+    """The header-only pass over `<split>/images`, and what it puts on the page.
+
+    Cheap enough to cover every image rather than a sample -- `Image.open` parses the
+    header and stops -- which is what lets these figures be read as facts about the
+    dataset instead of about a subsample.
+    """
+
+    def test_the_image_figures_and_stat_row_are_rendered(self, det_blob):
+        document = markup_only(render_report(det_blob))
+        dataset = re.search(
+            r'<section id="s-dataset">(.*?)</section>', document, re.DOTALL
+        ).group(1)
+
+        for fig_id in ("f_resolutions", "f_img_aspect", "f_megapixels"):
+            assert fig_id in det_blob["figures"]
+            assert f'data-fig="{fig_id}"' in dataset
+        assert "Image files" in dataset
+        assert 'class="statrow' in dataset
+
+    def test_the_stats_describe_the_files_on_disk(self, det_blob):
+        """Three columns, and the greyscale image in the fixture is counted as one."""
+        stats = det_blob["image_stats"]
+        columns = {c["heading"]: dict(c["rows"]) for c in stats["columns"]}
+
+        assert stats["scanned"] > 0
+        assert columns["Colour mode"]["L"] > 0
+        assert columns["File format"]["JPEG"] > 0
+        fit = next(c for h, c in columns.items() if h.startswith("Fit at imgsz="))
+        assert sum(fit.values()) > 0
+        assert any(k.startswith("short side <") for k in fit)
+
+    def test_the_scan_reads_headers_only(self, det_blob):
+        """A resolution ranking is only meaningful if every image was looked at."""
+        rows = det_blob["figures"]["f_resolutions"]["svg"]
+
+        assert "320 \u00d7 240" in rows
+        assert "240 \u00d7 320" in rows
+
+
+class TestExifOrientation:
+    """The scan must report the size the *loader* sees, not the size in the file.
+
+    Ultralytics transposes a JPEG whose EXIF orientation tag is 6 or 8, which is how
+    every phone photo is stored. A scan that skipped that would call a portrait split
+    landscape and put the resolution ranking, the orientation strip and the fit-at-imgsz
+    column all one axis out -- describing a dataset nobody trained on.
+    """
+
+    def _write(self, path, size, orientation=None):
+        from PIL import Image
+
+        image = Image.new("RGB", size, (90, 110, 130))
+        if orientation is None:
+            image.save(path)
+            return
+        exif = image.getexif()
+        exif[274] = orientation
+        image.save(path, exif=exif)
+
+    def test_a_rotated_jpeg_is_counted_on_the_axis_the_loader_uses(self, tmp_path):
+        from src.report.dataset_scan import DatasetScan
+
+        plain, rotated = tmp_path / "a.jpg", tmp_path / "b.jpg"
+        self._write(plain, (320, 240))
+        self._write(rotated, (320, 240), orientation=6)
+
+        scan = DatasetScan(["x"], imgsz=640)
+        scan.note_image_file(plain)
+        scan.note_image_file(rotated)
+
+        assert scan.orientation["landscape"] == 1
+        assert scan.orientation["portrait"] == 1
+        assert scan.resolutions == {"320x240": 1, "240x320": 1}
+
+    def test_it_agrees_with_ultralytics(self, tmp_path):
+        """The control: the two implementations must not drift apart."""
+        from PIL import Image
+        from ultralytics.data.utils import exif_size
+
+        from src.report.dataset_scan import _exif_size
+
+        for orientation in (None, 1, 3, 6, 8):
+            path = tmp_path / f"o{orientation}.jpg"
+            self._write(path, (320, 240), orientation)
+            with Image.open(path) as image:
+                assert _exif_size(image) == exif_size(image)
 
 
 class TestMarkupSanity:

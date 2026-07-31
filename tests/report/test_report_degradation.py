@@ -78,7 +78,7 @@ class TestMissingInputs:
     def test_builds_with_no_dataset_directory(self, tmp_path):
         """A cleaned-up dataset directory costs the split section and nothing else."""
         ctx = make_context(tmp_path, with_dataset=False)
-        blob, document = _document(ctx, tmp_path, "ds")
+        blob, _document_html = _document(ctx, tmp_path, "ds")
 
         assert "t_split_composition" not in blob["tables"]
         assert "f_split_stack" not in blob["figures"]

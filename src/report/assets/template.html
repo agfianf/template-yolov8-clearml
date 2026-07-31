@@ -12,20 +12,31 @@
      its own address -- so the escape hatch works even if the iframe sandbox blocks
      scripts entirely. -->
 <a class="banner" href="" target="_blank" rel="noopener">Open the full report in a new tab &rarr;</a>
-<div class="brandbar"></div>
-<div class="shell">
-<nav id="nav">{{NAV}}<button id="theme" type="button" title="Toggle light / dark">Theme</button></nav>
-<main>{{SECTIONS}}</main>
-</div>
+<header class="nav glass">
+  <div class="nav-in">
+    <span class="brandmark">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="brand-txt">
+        <span class="eyebrow">Evaluation report</span>
+        <span class="brand-run">{{RUN_NAME}}</span>
+      </span>
+    </span>
+    <nav class="nav-links" aria-label="Sections">{{NAV}}</nav>
+    <button class="tgl" id="theme" type="button" title="Toggle light / dark">Theme</button>
+  </div>
+</header>
+<nav class="toc" aria-label="Sections">{{TOC}}</nav>
+<div class="wrap"><main class="sheet">{{SECTIONS}}</main></div>
 <div id="filterbar" hidden><span id="filtertext"></span><button id="filterclear" type="button">Clear filter</button></div>
-<div id="lb" hidden>
-  <button id="lbclose" type="button" aria-label="Close">&times;</button>
-  <div id="lbstage"><img id="lbimg" alt=""><div id="lbovl"></div></div>
-  <figcaption id="lbcap"></figcaption>
+<div class="lb" id="lb" aria-hidden="true">
+  <button class="lb-btn x" id="lbclose" type="button" aria-label="Close">&times;</button>
+  <button class="lb-btn prev" id="lbprev" type="button" aria-label="Previous">&#8249;</button>
+  <button class="lb-btn next" id="lbnext" type="button" aria-label="Next">&#8250;</button>
+  <div class="lb-stage" id="lbstage"><img id="lbimg" alt=""><svg id="lbovl" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+  <div class="lb-bar"><span class="lb-cap" id="lbcap"></span><span class="lb-n" id="lbn"></span></div>
 </div>
 <style id="filter-rules"></style>
 <script type="application/json" id="report-data">{{BLOB}}</script>
-<script>{{PLOTLY_JS}}</script>
 <script>{{SORTABLE_JS}}</script>
 <script>{{REPORT_JS}}</script>
 </body>

@@ -1,9 +1,11 @@
 """Assembly of the report's single JSON blob, and the only place caps are applied.
 
-The page carries all of its data in one `<script type="application/json">` element and
-builds its charts and galleries from it client-side. That is the pytest-html pattern
-rather than the ydata-profiling one, and it is what keeps the markup small enough to
-stay inside a DOM-node budget while the data stays inspectable.
+The page carries its data in one `<script type="application/json">` element. The figures
+are drawn from it here, in Python, and inlined into the document as SVG; what stays in
+the blob for the runtime is everything whose node count would grow with the galleries --
+the thumbnails and their overlay boxes, built a tile at a time as they scroll into view.
+That is what keeps the markup inside a DOM-node budget while every number in the page
+stays inspectable.
 
 Every cap in `CAPS` is enforced here and asserted by `tests/report/test_report_size.py`.
 Nothing in the blob is a per-image or per-detection array: every distribution arrives
@@ -23,8 +25,7 @@ from typing import Any
 import numpy as np
 
 from src.report import figures as figs
-from src.report import theme
-from src.report.dataset_scan import DatasetScan, scan_dataset
+from src.report.dataset_scan import MP_MAX, DatasetScan, scan_dataset
 from src.report.thumbs import ThumbnailStore
 from src.report.tide import compute_tide
 from src.utils.logging import get_logger
@@ -34,11 +35,17 @@ logger = get_logger(__name__)
 
 SCHEMA = 1
 
-MAX_FIGURES = 24
+# A segmentation run draws 27 figures once the image-file and epoch-time charts are
+# added, so the cap is the count that fits plus headroom, not a round number.
+MAX_FIGURES = 32
 MAX_TABLE_ROWS = 120
 MAX_CM_CLASSES = 60
 MAX_HIST_BINS = 50
-MAX_BOXES_PER_ITEM = 20
+# Mirrors `capture.MAX_BOXES_PER_ITEM`. It has to: `_norm_boxes` truncates with this
+# one, and a lower value here would flat-truncate the concatenation that `_balanced`
+# exists to keep balanced -- dropping the annotation layer of exactly the crowded images
+# the worst-images grid selects.
+MAX_BOXES_PER_ITEM = 40
 MAX_CLASS_NAMES = 1000
 MAX_WARNINGS = 30
 MAX_DEGRADATIONS = 20
@@ -46,6 +53,7 @@ MAX_CONFIG_FULL = 200
 MAX_CONFIG_DIFF = 60
 MAX_KPIS = 12
 MAX_GRIDS = 6
+MAX_HIGHLIGHTS = 7
 
 CAPS = {
     "figures": MAX_FIGURES,
@@ -58,6 +66,7 @@ CAPS = {
     "degradations": MAX_DEGRADATIONS,
     "kpis": MAX_KPIS,
     "grids": MAX_GRIDS,
+    "highlights": MAX_HIGHLIGHTS,
 }
 
 GRID_SPECS = (
@@ -128,6 +137,11 @@ class _Builder:
         self.figures: dict[str, Any] = {}
         self.tables: dict[str, Any] = {}
         self.grids: dict[str, Any] = {}
+        self.image_stats: dict[str, Any] | None = None
+        # Filled by `_section_training` from results.csv, read again by `_environment`:
+        # the cumulative `time` column is the only per-epoch duration that survives the
+        # run, since `trainer.epoch_time` only ever holds the last one.
+        self.epoch_seconds: list[float] = []
         self.metrics = getattr(ctx.validator, "metrics", None) or ctx.final_metrics
         self.names = self._names()
         self.name_to_idx = {n: i for i, n in enumerate(self.names)}
@@ -185,6 +199,7 @@ class _Builder:
         meta = self._meta()
         kpis = self._kpis()
         self._section_dataset()
+        self._section_images()
         self._section_per_class()
         self._section_confusion()
         self._section_threshold()
@@ -196,19 +211,19 @@ class _Builder:
         self._section_training()
         self._collect_capture_degradations()
         self._build_warnings(meta)
+        environment = self._environment(meta)
 
         blob = {
             "schema": SCHEMA,
             "meta": meta,
             "kpis": kpis[:MAX_KPIS],
+            "highlights": self._highlights(meta, tide)[:MAX_HIGHLIGHTS],
             "model_card": self._model_card(),
             "warnings": self.warnings[:MAX_WARNINGS],
             "classes": self.names,
             "figures": dict(list(self.figures.items())[:MAX_FIGURES]),
-            "plotly_template": {
-                "light": theme.plotly_template(False),
-                "dark": theme.plotly_template(True),
-            },
+            "image_stats": self.image_stats,
+            "environment": environment,
             "tables": self.tables,
             "grids": dict(list(self.grids.items())[:MAX_GRIDS]),
             "thumbs": self.thumbs.thumbs,
@@ -241,6 +256,7 @@ class _Builder:
         }
         return {
             "run_name": str(getattr(task, "name", "") or "training run")[:200],
+            "tags": _task_tags(task),
             "task_id": str(getattr(task, "id", "") or ""),
             "task_url": _task_url(task),
             "project": str(_task_project(task)),
@@ -464,6 +480,58 @@ class _Builder:
             ],
             "sort": "Count:desc",
             "note": "Heuristics over the label files; each is a smell, not a verdict.",
+        }
+
+    # --- section 3b: the image files themselves -------------------------------------
+    def _section_images(self) -> None:
+        """Figures and the stat row for the header-only pass over `<split>/images`.
+
+        Everything here comes from `DatasetScan`'s fixed-size accumulators, so it costs
+        the same on 200 images and on 200,000.
+        """
+        scan = self.ctx.dataset_scan
+        if scan is None or not scan.has_images:
+            return
+        rows, other, sizes = scan.top_resolutions(6)
+        total = scan.images_scanned
+        self._fig("f_resolutions", figs.image_resolutions, rows, other, sizes, total)
+        self._fig("f_img_aspect", figs.image_orientation, dict(scan.orientation), total)
+        self._fig(
+            "f_megapixels",
+            figs.megapixels,
+            scan.mp_hist,
+            scan.megapixel_percentile(0.5),
+            MP_MAX,
+            total,
+        )
+        imgsz = scan.imgsz
+        short_key = "short side below imgsz"
+        self.image_stats = {
+            "scanned": total,
+            "columns": [
+                {
+                    "heading": "Colour mode",
+                    "rows": [[k, v] for k, v in scan.modes.most_common(6)],
+                },
+                {
+                    "heading": "File format",
+                    "rows": [[k, v] for k, v in scan.formats.most_common(6)],
+                },
+                {
+                    "heading": f"Fit at imgsz={imgsz}",
+                    "rows": [
+                        ["downscaled", scan.fit.get("downscaled", 0)],
+                        ["native", scan.fit.get("native", 0)],
+                        ["upscaled", scan.fit.get("upscaled", 0)],
+                        [f"short side <{imgsz}", scan.fit.get(short_key, 0)],
+                    ],
+                },
+            ],
+            "note": (
+                f"Read from the image headers, every image, no pixel decode. A mode "
+                f"other than RGB and a short side under {imgsz} both survive into the "
+                f"per-class numbers: the loader upscales rather than invents detail."
+            ),
         }
 
     # --- section 4 ------------------------------------------------------------------
@@ -794,6 +862,9 @@ class _Builder:
             self.grids[gid] = {
                 "title": title,
                 "subtitle": subtitle,
+                # The lightbox enlarges these same bytes, and says so in its caption --
+                # so nobody reads the softness as a model artefact.
+                "thumb_px": int(self.cfg.get("report_thumbnail_px", 192)),
                 "basis": basis.format(conf=f"{display:g}", hi=f"{hi:g}"),
                 "items": items_out,
                 "empty_reason": None if items_out else _empty_reason(gid, cap, hi),
@@ -820,6 +891,11 @@ class _Builder:
 
         from src.yolov8.metrics_utils import MAX_CURVE_POINTS
 
+        # Before the downsample: `time` is cumulative seconds since the start of
+        # training, so differencing the *whole* column is the per-epoch series. Taking
+        # it from every tenth row would report ten epochs as one.
+        self.epoch_seconds = _epoch_durations(df.get("time"))
+
         step = max(1, math.ceil(len(df) / MAX_CURVE_POINTS))
         df = df.iloc[::step]
         epochs = [int(v) for v in df.get("epoch", range(len(df)))]
@@ -837,6 +913,172 @@ class _Builder:
             self._fig("f_val_map", figs.val_map_curve, epochs, maps)
         if losses:
             self._fig("f_losses", figs.loss_curves, epochs, losses)
+
+    # --- section 12: environment ----------------------------------------------------
+    def _environment(self, meta: dict[str, Any]) -> dict[str, Any]:
+        """Where the run executed and how long it took, degrading field by field.
+
+        Split by how reliable the source is. The machine facts are read locally on the
+        agent and are certain; the worker id and the start timestamp come off the
+        ClearML task and are best effort. A field that cannot be read prints `unknown`
+        on its own line -- it never removes the row, because a missing row reads as a
+        machine that had no GPU rather than as a lookup that failed.
+        """
+        where = [
+            ["Worker", _task_worker(self.ctx.task)],
+            ["Host", _safe(_hostname)],
+            ["GPU", _gpu_line()],
+            ["CUDA / driver", _cuda_line()],
+            ["Torch / Python", _torch_python_line()],
+            ["Image", meta["image_tag"]],
+        ]
+        timing = self._timing(meta)
+        if self.epoch_seconds:
+            self._fig("f_epoch_seconds", figs.epoch_seconds, self.epoch_seconds)
+        return {
+            "where": where,
+            "timing": timing,
+            "note": (
+                "Wall clock covers the whole task, dataset download and export "
+                "included; the training figure covers the epochs only."
+            ),
+        }
+
+    def _timing(self, meta: dict[str, Any]) -> list[list[str]]:
+        started = _task_started(self.ctx.task)
+        finished = datetime.now(UTC)
+        train_total = sum(self.epoch_seconds) if self.epoch_seconds else None
+        rows = [
+            ["Started", _stamp(started)],
+            ["Finished", _stamp(finished)],
+            [
+                "Wall clock",
+                _duration((finished - started).total_seconds()) if started else "unknown",
+            ],
+        ]
+        epochs = len(self.epoch_seconds)
+        rows.append(
+            [
+                "Training",
+                "unknown"
+                if train_total is None
+                else f"{_duration(train_total)} over {epochs} epoch"
+                + ("s" if epochs != 1 else ""),
+            ]
+        )
+        if self.epoch_seconds:
+            mean = train_total / epochs
+            rows.append(
+                [
+                    "Mean epoch",
+                    (
+                        f"{_duration(mean)} · min "
+                        f"{_duration(min(self.epoch_seconds))} · max "
+                        f"{_duration(max(self.epoch_seconds))}"
+                    ),
+                ]
+            )
+        rows.append(["Final validation", _validation_duration(self.ctx.validator, meta)])
+        return rows
+
+    # --- highlights -----------------------------------------------------------------
+    def _highlights(self, meta: dict[str, Any], tide: dict[str, Any] | None) -> list[str]:
+        """Five to seven measured facts, in the order a reader meets their figures.
+
+        Every line states what was measured and stops. No line says what it means, what
+        it usually means, or what to do about it -- that is the whole contract of this
+        block, and it is what keeps it readable beside the warnings rather than
+        competing with them. A line whose inputs are missing is dropped, never guessed.
+        """
+        out = [
+            self._hl_classes(meta),
+            self._hl_tide(tide),
+            self._hl_threshold(),
+            self._hl_images(),
+            self._hl_objects(),
+            self._hl_run(meta),
+        ]
+        return [line for line in out if line]
+
+    def _hl_classes(self, meta: dict[str, Any]) -> str:
+        scan = self.ctx.dataset_scan
+        if scan is None or not self.names:
+            return ""
+        totals = scan.instances_by_class(len(self.names))
+        grand = sum(totals)
+        if grand <= 0:
+            return ""
+        rarest = min(range(len(self.names)), key=lambda i: totals[i])
+        line = (
+            f"{len(self.names)} classes, {grand:,} instances. {self.names[rarest]} "
+            f"carries {totals[rarest]:,} of them"
+        )
+        present = {str(e.get("Class")) for e in self.summary}
+        if self.summary and self.names[rarest] not in present:
+            return f"{line} and none landed in the {meta['split_name']} split."
+        return f"{line}."
+
+    def _hl_tide(self, tide: dict[str, Any] | None) -> str:
+        if not tide or tide.get("mode") != "delta_ap":
+            return ""
+        deltas = tide.get("delta_ap") or {}
+        counts = tide.get("counts") or {}
+        if not deltas:
+            return ""
+        kind = max(deltas, key=lambda k: abs(float(deltas[k])))
+        results = dict(getattr(self.metrics, "results_dict", None) or {})
+        base = results.get("metrics/mAP50(B)")
+        tail = "" if base is None else f", against a baseline AP50 of {float(base):.4f}"
+        return (
+            f"{kind} is the largest error type: {int(counts.get(kind, 0)):,} "
+            f"detections, dAP50 {abs(float(deltas[kind])):.4f}{tail}."
+        )
+
+    def _hl_threshold(self) -> str:
+        tau = (self.optimal or {}).get("global_conf")
+        if tau is None:
+            return ""
+        return f"F1 peaks at conf {float(tau):.3f} over the classes with ground truth."
+
+    def _hl_images(self) -> str:
+        scan = self.ctx.dataset_scan
+        if scan is None or not scan.has_images:
+            return ""
+        median = scan.megapixel_percentile(0.5)
+        sizes = len(scan.resolutions)
+        line = (
+            f"{scan.images_scanned:,} images across {sizes}"
+            f"{'+' if scan.resolutions_truncated else ''} distinct sizes"
+        )
+        if median:
+            budget = median * 1e6 / max(scan.imgsz**2, 1)
+            return (
+                f"{line}; the median frame is {median:g} MP, {budget:.0f}x the pixel "
+                f"budget at imgsz {scan.imgsz}."
+            )
+        return f"{line}."
+
+    def _hl_objects(self) -> str:
+        scan = self.ctx.dataset_scan
+        if scan is None or not scan.objects_per_image:
+            return ""
+        counter = dict(scan.objects_per_image)
+        median = figs.percentile_from_counter(counter, 0.5)
+        return (
+            f"Objects per image runs from {min(counter):,} to {max(counter):,}, "
+            f"median {median:.0f}."
+        )
+
+    def _hl_run(self, meta: dict[str, Any]) -> str:
+        epochs = self.ctx.args_train.get("epochs")
+        fraction = self.ctx.args_train.get("fraction")
+        split = f"{int(meta['val_images']):,} images in the {meta['split_name']} split"
+        if not epochs:
+            return f"{split[0].upper()}{split[1:]}."
+        run = f"{int(epochs)} epochs"
+        if fraction is not None and 0 < float(fraction) < 1.0:
+            run += f" on a {float(fraction):.0%} fraction"
+        return f"{run}, {split}."
 
     # --- warnings and caveats -------------------------------------------------------
     def _collect_capture_degradations(self) -> None:
@@ -988,6 +1230,146 @@ class _Wrap:
 def build_blob(ctx: ReportContext) -> dict[str, Any]:
     """Assemble the whole blob. Never raises for a missing input; degrades instead."""
     return _Builder(ctx).build()
+
+
+def _safe(read, default: str = "unknown") -> str:
+    """Read one environment fact, or say so. Never lets a lookup fail the report."""
+    try:
+        value = read()
+    except Exception as e:
+        logger.debug("environment field unavailable: %s", e)
+        return default
+    return str(value) if value not in (None, "") else default
+
+
+def _task_tags(task: Any) -> list[str]:
+    """ClearML tags, read at report time -- the end of the run, so this is final."""
+    try:
+        tags = list(getattr(task, "get_tags", list)() or [])
+    except Exception as e:
+        logger.debug("task tags unavailable: %s", e)
+        return []
+    return [str(t)[:60] for t in tags][:24]
+
+
+def _hostname() -> str:
+    import platform
+
+    return platform.node()
+
+
+def _task_worker(task: Any) -> str:
+    return _safe(lambda: (task.data.last_worker or "") if task is not None else "")
+
+
+def _task_started(task: Any) -> datetime | None:
+    """Return the ClearML task's own start -- where wall clock is measured from."""
+    try:
+        started = task.data.started if task is not None else None
+    except Exception as e:
+        logger.debug("task start time unavailable: %s", e)
+        return None
+    if isinstance(started, datetime):
+        return started if started.tzinfo else started.replace(tzinfo=UTC)
+    return None
+
+
+def _gpu_line() -> str:
+    def read() -> str:
+        import torch
+
+        if not torch.cuda.is_available():
+            return "none visible"
+        props = torch.cuda.get_device_properties(0)
+        count = torch.cuda.device_count()
+        gb = props.total_memory / 1024**3
+        return f"{props.name} · {gb:.0f} GB · {count} visible"
+
+    return _safe(read)
+
+
+def _cuda_line() -> str:
+    def read() -> str:
+        import torch
+
+        cuda = torch.version.cuda or "cpu build"
+        return f"{cuda} · driver {_driver_version()}"
+
+    return _safe(read)
+
+
+def _driver_version() -> str:
+    """Return the NVIDIA driver version, from NVML if it is importable.
+
+    Torch does not expose it: there is no `_cuda_getDriverVersion` in the build this
+    template pins, and reaching for one that does not exist is how the whole row ends up
+    reading `unknown` on a machine that has a perfectly good driver.
+    """
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        raw = pynvml.nvmlSystemGetDriverVersion()
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
+    except Exception as e:
+        logger.debug("driver version unavailable: %s", e)
+        return "unknown"
+
+
+def _torch_python_line() -> str:
+    def read() -> str:
+        import platform
+
+        import torch
+
+        return f"{torch.__version__} · Python {platform.python_version()}"
+
+    return _safe(read)
+
+
+def _stamp(when: datetime | None) -> str:
+    if when is None:
+        return "unknown"
+    return when.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _duration(seconds: float | None) -> str:
+    if seconds is None or seconds < 0:
+        return "unknown"
+    total = round(seconds)
+    if total < 60:
+        return f"{total} s"
+    if total < 3600:
+        return f"{total // 60} min {total % 60:02d} s"
+    return f"{total // 3600} h {total % 3600 // 60:02d} min"
+
+
+def _epoch_durations(column: Any) -> list[float]:
+    """Difference the cumulative `time` column into one duration per epoch."""
+    if column is None:
+        return []
+    try:
+        values = [float(v) for v in column]
+    except TypeError, ValueError:
+        return []
+    if not values or any(math.isnan(v) for v in values):
+        return []
+    out = [values[0]]
+    out += [max(values[i] - values[i - 1], 0.0) for i in range(1, len(values))]
+    return out
+
+
+def _validation_duration(validator: Any, meta: dict[str, Any]) -> str:
+    """From the validator's own per-image speed, which is the only timing it keeps."""
+
+    def read() -> str:
+        per_image = sum(float(v) for v in (validator.speed or {}).values())
+        images = int(meta.get("val_images") or 0)
+        if per_image <= 0 or images <= 0:
+            return ""
+        return _duration(per_image * images / 1000.0)
+
+    return _safe(read)
 
 
 def _kpi(label: str, value: Any, fmt: str, basis: str) -> dict[str, Any]:

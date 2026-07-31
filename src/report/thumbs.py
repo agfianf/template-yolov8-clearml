@@ -5,14 +5,20 @@ base64. A second, larger tier for the lightbox was measured at ~28 KB each, whic
 cap would be 5.6 MB on its own -- the entire size budget spent on a hover interaction.
 The lightbox enlarges the same bytes and says so in its caption.
 
-Two shapes, for two different jobs:
+Two shapes, for two different jobs, and **neither carries a drawn box**:
 
 * **Instance crops** (`focus` set) crop to the object, expanded and squared. The crop
-  *is* the object, so no box is drawn -- a CSS ring in the outcome colour and a text
-  badge carry the meaning, and stay crisp at any zoom.
-* **Whole images** (`focus` unset) letterbox the frame and bake a 2px, text-free outline
-  in the fixed status colours, because a whole-image thumbnail with no marks is useless.
-  Labelled vector boxes are still drawn over it in the lightbox.
+  *is* the object, so a CSS ring in the outcome colour and a text badge carry the
+  meaning, and stay crisp at any zoom.
+* **Whole images** (`focus` unset) letterbox the frame and stop there. The overlay is an
+  SVG layer drawn over these pixels from `grids[].items[].boxes`, which `blob.py::
+  _norm_boxes` emits as thumbnail-normalised 0..1 floats.
+
+An outline used to be baked into the whole-image JPEGs. It is gone because the gallery
+now has one global annotations switch and three overlay tabs (outcome, prediction,
+ground truth) over the *same* thumbnail: baked pixels can be neither hidden nor
+re-coloured, so a switch over them is impossible. Vector boxes also stay sharp when the
+lightbox enlarges the same bytes, which the 2px outline did not.
 
 No pixels are held during validation: this runs afterwards, re-reading at most the cap's
 worth of files from the dataset directory, which is still on disk (`cleanup_cache`
@@ -26,7 +32,6 @@ import io
 
 from typing import Any
 
-from src.report.theme import OUTCOME_STYLE
 from src.utils.logging import Tally, get_logger
 
 
@@ -112,7 +117,7 @@ class ThumbnailStore:
         )
 
     def _encode(self, item: dict, crop: tuple[int, int, int, int]) -> str | None:
-        from PIL import Image, ImageDraw
+        from PIL import Image
 
         with Image.open(item["im_file"]) as src:
             img = src.convert("RGB")
@@ -126,18 +131,6 @@ class ThumbnailStore:
         img = img.resize(new, Image.Resampling.BILINEAR)
         off = ((size - new[0]) // 2, (size - new[1]) // 2)
         canvas.paste(img, off)
-
-        if not item.get("focus"):
-            draw = ImageDraw.Draw(canvas)
-            for box in (item.get("boxes") or [])[:20]:
-                colour = OUTCOME_STYLE.get(box[4], OUTCOME_STYLE["mixed"])[0]
-                x0 = off[0] + (float(box[0]) - cx0) * scale
-                y0 = off[1] + (float(box[1]) - cy0) * scale
-                x1 = off[0] + (float(box[2]) - cx0) * scale
-                y1 = off[1] + (float(box[3]) - cy0) * scale
-                if x1 - x0 < 1 or y1 - y0 < 1:
-                    continue
-                draw.rectangle([x0, y0, x1, y1], outline=colour, width=2)
 
         buf = io.BytesIO()
         canvas.save(

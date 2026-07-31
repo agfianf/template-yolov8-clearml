@@ -341,10 +341,23 @@ def make_trainer(save_dir: Path, epochs: int = 20, seg: bool = False):
 # --- dataset on disk ----------------------------------------------------------------
 
 
+# Two landscape sizes, one portrait and one square, one of them greyscale: enough for
+# the header pass to have a resolution ranking, an orientation split, a mode other than
+# RGB and images on both sides of imgsz.
+SPLIT_IMAGE_SHAPES = (
+    (320, 240, "RGB"),
+    (320, 240, "RGB"),
+    (240, 320, "RGB"),
+    (800, 600, "RGB"),
+    (128, 128, "L"),
+)
+
+
 def make_dataset(root: Path, n_classes: int = PRESENT, per_split=(40, 12, 8), seg=False):
     """Write a YOLO dataset tree with real label files, for the split scan."""
     rng = np.random.default_rng(11)
     for split, count in zip(("train", "valid", "test"), per_split, strict=True):
+        _make_split_images(root / split / "images", count)
         labels = root / split / "labels"
         labels.mkdir(parents=True, exist_ok=True)
         for i in range(count):
@@ -368,6 +381,20 @@ def make_dataset(root: Path, n_classes: int = PRESENT, per_split=(40, 12, 8), se
                     lines.append(f"{cls} {cx:.5f} {cy:.5f} {w:.5f} {h:.5f}")
             (labels / f"img_{i:05d}.txt").write_text("\n".join(lines) + "\n")
     return root
+
+
+def _make_split_images(directory: Path, count: int) -> None:
+    """Write the image side of the tree, which `dataset_scan` header-reads.
+
+    Tiny and flat-coloured: this pass never decodes a pixel, so the only thing that has
+    to be real about these files is their header.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    for i in range(count):
+        w, h, mode = SPLIT_IMAGE_SHAPES[i % len(SPLIT_IMAGE_SHAPES)]
+        Image.new(mode, (w, h), 128 if mode == "L" else (90, 110, 130)).save(
+            directory / f"img_{i:05d}.jpg", quality=70
+        )
 
 
 # --- one-call context ---------------------------------------------------------------
