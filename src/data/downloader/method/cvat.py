@@ -35,9 +35,58 @@ STATUS_MESSAGES = {
 }
 
 
+# CVAT pages its task list. 100 keeps the number of round trips low without
+# asking for a response big enough to time out.
+TASKS_PAGE_SIZE = 100
+
+# A runaway guard, not a real limit: 200 pages is 20,000 tasks in one project.
+MAX_TASK_PAGES = 200
+
+
 def describe_task_status(response) -> str:
     """Human-readable form of an export-status response."""
     return STATUS_MESSAGES.get(response.status_code, f"{response.status_code}: unknown")
+
+
+def _list_tasks_paged(
+    base_url: str, project_id: int, auth, params: dict | None
+) -> list[dict]:
+    """Walk the paged task list of one project and return every entry.
+
+    Shared by the v1 and v2 downloaders, which differ only in `base_url` and in
+    the organization parameter v2 adds to every request.
+    """
+    tasks: list[dict] = []
+    for page in range(1, MAX_TASK_PAGES + 1):
+        query = {
+            "project_id": project_id,
+            "page": page,
+            "page_size": TASKS_PAGE_SIZE,
+            **(params or {}),
+        }
+        response = requests.get(url=urljoin(base_url, "tasks"), auth=auth, params=query)
+        response.raise_for_status()
+        payload = response.json()
+        results = payload.get("results") or []
+        tasks.extend(results)
+        logger.debug(
+            "cvat project %s page %s: %s task(s) of %s",
+            project_id,
+            page,
+            len(results),
+            payload.get("count"),
+        )
+        if not payload.get("next") or not results:
+            break
+    else:
+        logger.warning(
+            "cvat project %s: stopped after %s pages, list may be truncated",
+            project_id,
+            MAX_TASK_PAGES,
+        )
+    # Oldest first, so the same project always produces the same order and two
+    # runs over the same config download in the same sequence.
+    return sorted(tasks, key=lambda t: t["id"])
 
 
 class CVATHTTPDownloaderV1(BaseDownloader):
@@ -73,6 +122,15 @@ class CVATHTTPDownloaderV1(BaseDownloader):
             auth=self.auth,
         )
         return response.json()
+
+    def list_tasks_of_project(self, project_id: int) -> list[dict]:
+        """Every task in a project, oldest id first.
+
+        Paged by `page`, not by following the `next` URL: CVAT builds that URL
+        from its own configured hostname, which is not necessarily the one we
+        can reach (this server answers on two different addresses).
+        """
+        return _list_tasks_paged(self.base_url, project_id, self.auth, params=None)
 
     def get_project_info(self, task_info):
         project_id = task_info["project_id"]
@@ -266,6 +324,12 @@ class CVATHTTPDownloaderV2(BaseDownloader):
             url=task_url, auth=self.auth, params={"org": self.organization}
         )
         return response.json()
+
+    def list_tasks_of_project(self, project_id: int) -> list[dict]:
+        """Every task in a project, oldest id first."""
+        return _list_tasks_paged(
+            self.base_url, project_id, self.auth, params={"org": self.organization}
+        )
 
     def get_project_info(self, task_info):
         project_id = task_info["project_id"]

@@ -19,6 +19,7 @@ from src.data.converter.coco2yolo import (
 )
 from src.data.downloader.method.cvat import CVATHTTPDownloaderV1, CVATHTTPDownloaderV2
 from src.data.setup import setup_dataset
+from src.data.task_scope import resolve_task_scope
 from src.schema.coco import Coco as CocoSchema
 from src.utils.general import read_json
 from src.utils.logging import get_logger
@@ -40,6 +41,31 @@ def _as_name_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [part.strip() for part in value.split(",") if part.strip()]
     return [str(part).strip() for part in value if str(part).strip()]
+
+
+def _as_int_list(value: Any) -> list[int]:
+    """Read a list of ids that may arrive as a list, or as UI text.
+
+    ClearML usually restores a list to a list, but a field typed by hand comes
+    back as `"1268, 1152"` or `"[1268, 1152]"`. A non-numeric entry is dropped
+    with a warning rather than crashing the run at download time, where the
+    message would be about a missing task id instead of a typo.
+    """
+    if value in (None, "", []):
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.strip("[]() ").split(",")]
+    else:
+        parts = [str(p).strip() for p in value]
+    ids = []
+    for part in parts:
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            logger.warning("ignoring non-numeric id %r", part)
+    return ids
 
 
 def _as_bool(value: Any, default: bool) -> bool:
@@ -215,19 +241,30 @@ class DataHandler:
         self._cleanup_dirs()
         total_count_files = 0
         label_names = []
-        task_id_train = self.config["cvat"]["task_ids_train"]
-        task_id_test = self.config["cvat"]["task_ids_test"]
+        cvat = self.config["cvat"]
 
         is_server1, _ = CVATHTTPDownloaderV1().get_about_server()
         is_server2, _ = CVATHTTPDownloaderV2().get_about_server()
         if is_server1:
-            logger.info("cvat: server V1 detected, %d train task(s)", len(task_id_train))
+            logger.info("cvat: server V1 detected")
             cvat_http = CVATHTTPDownloaderV1()
         elif is_server2:
-            logger.info("cvat: server V2 detected, %d train task(s)", len(task_id_train))
+            logger.info("cvat: server V2 detected")
             cvat_http = CVATHTTPDownloaderV2()
         else:
             raise ValueError("CVAT Server not found")
+
+        # Projects are expanded into tasks here, and test tasks are subtracted
+        # from the training set -- the test batch usually lives *inside* the
+        # training project, so without this it would be trained on as well.
+        scope = resolve_task_scope(
+            list_tasks=cvat_http.list_tasks_of_project,
+            task_ids_train=_as_int_list(cvat.get("task_ids_train")),
+            task_ids_test=_as_int_list(cvat.get("task_ids_test")),
+            project_ids_train=_as_int_list(cvat.get("project_ids_train")),
+            project_ids_test=_as_int_list(cvat.get("project_ids_test")),
+        )
+        task_id_train, task_id_test = scope.train, scope.test
 
         # Download everything first, train and test alike. The class map has to be
         # built from all of them before the first label file is written, and the

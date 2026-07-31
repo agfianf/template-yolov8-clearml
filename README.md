@@ -116,9 +116,48 @@ args_visualization = {
 
 ## Data Handling
 
-- **CVAT**: Specify task IDs in `src/params.py` (`args_data["cvat"]["task_ids_train"]` etc.). The pipeline downloads, extracts, and converts the data.
+- **CVAT**: Name whole projects (`project_ids_train`) or individual tasks (`task_ids_train`) in `args_data["cvat"]` — see below. The pipeline downloads, extracts, and converts the data.
 - **S3/MinIO**: Specify S3 URIs. (Detection/segmentation support may require further customization.)
 - **Filtering**: Use `class_exclude`, `attributes_exclude`, and `area_segment_min` in `args_data` to filter data before training.
+
+### Choosing sources: by project or by task
+
+Four keys in `args_data["cvat"]`, and they add up rather than replace each other:
+
+| Key | Meaning |
+|---|---|
+| `project_ids_train` | Every task in these projects |
+| `task_ids_train` | Individual tasks, on top of whatever the projects expand to |
+| `project_ids_test` | Every task in these projects, as the test split |
+| `task_ids_test` | Individual test tasks |
+
+**Test tasks are always subtracted from training.** That is the point of the
+project option: the batch you set aside for testing normally lives *inside* the
+training project, so expanding the project would otherwise train on it and every
+metric reported on the test split would be measured against images the model had
+already seen.
+
+```python
+"cvat": {
+    "project_ids_train": [53],   # 8 tasks
+    "task_ids_test": [1181],     # one of those 8
+    "task_ids_train": [],
+    "project_ids_test": [],
+}
+# -> train 7 task(s), test 1 task(s); 1 excluded from train as test: [1181]
+```
+
+Naming projects also means a task added in CVAT later is picked up on the next
+run, instead of being silently missing because nobody updated the id list.
+
+Two things the resolver does on its own, both reported in that one summary line:
+
+- **Tasks with no frames are skipped** — they export an empty archive and then
+  fail in the converter with a much less obvious message.
+- **Tasks not yet in `completed` status are counted and named.** They are still
+  included, because "annotation" is the normal state of a task in active use, but
+  a partially annotated image teaches the model that a real object is background.
+  If the count surprises you, that is the number to look at.
 
 ### Class order across sources
 

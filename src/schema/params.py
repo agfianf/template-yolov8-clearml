@@ -65,6 +65,8 @@ class TaskParams(BaseModel):
 class CVATParams(BaseModel):
     task_ids_train: list[int] = Field(default_factory=lambda: [48], description="CVAT task IDs for training")  # noqa: E501
     task_ids_test: list[int] = Field(default_factory=list, description="CVAT task IDs for testing")  # noqa: E501
+    project_ids_train: list[int] = Field(default_factory=list, description="Every task of these projects, minus the test tasks")  # noqa: E501
+    project_ids_test: list[int] = Field(default_factory=list, description="Every task of these projects, used for testing")  # noqa: E501
 
 
 # fmt: off

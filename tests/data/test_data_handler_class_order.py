@@ -16,6 +16,9 @@ from src.yolov8.data import DataHandler
 
 
 TRAIN_A, TRAIN_B, TEST = 1, 2, 3
+# All three tasks live in one CVAT project, which is the case the project-id
+# option has to get right: the test task is *inside* the training project.
+CVAT_PROJECT = 7
 
 
 @pytest.fixture
@@ -37,6 +40,14 @@ def fake_cvat(write_project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
         def get_local_dataset_coco(self, task_ids, annotations_only=False):  # noqa: ARG002
             return [str(projects[t]) for t in task_ids]
+
+        def list_tasks_of_project(self, project_id):
+            if project_id != CVAT_PROJECT:
+                return []
+            return [
+                {"id": t, "name": f"task-{t}", "size": 10, "status": "completed"}
+                for t in (TRAIN_A, TRAIN_B, TEST)
+            ]
 
     monkeypatch.setattr(data_module, "CVATHTTPDownloaderV1", FakeDownloader)
     monkeypatch.setattr(data_module, "CVATHTTPDownloaderV2", FakeDownloader)
@@ -188,3 +199,57 @@ def test_settings_are_not_mistaken_for_data_sources() -> None:
 def test_bad_on_unknown_class_is_rejected_up_front() -> None:
     with pytest.raises(ValueError, match="on_unknown_class"):
         DataHandler(args_data=_config(on_unknown_class="ignore"))
+
+
+# --------------------------------------------------------------------------
+# Naming sources by project instead of by task
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("fake_cvat")
+def test_a_training_project_excludes_its_own_test_task() -> None:
+    """The leak this option exists to prevent, end to end."""
+    handler = DataHandler(
+        args_data=_config(
+            cvat={
+                "task_ids_train": [],
+                "task_ids_test": [TEST],
+                "project_ids_train": [CVAT_PROJECT],
+                "project_ids_test": [],
+            }
+        ),
+        task_model="detect",
+    )
+
+    dataset_dir = Path(handler.export())
+
+    assert "names: ['car', 'speed_limit']" in _yaml(dataset_dir)
+    n_train = len(list((dataset_dir / "train" / "images").iterdir()))
+    n_valid = len(list((dataset_dir / "valid" / "images").iterdir()))
+    n_test = len(list((dataset_dir / "test" / "images").iterdir()))
+
+    # Two training tasks = 20 pairs, which `split_folder_yolo` turns into 16 + 3
+    # (the documented int(20 * (1 - 0.8)) rounding). Had TEST been trained on as
+    # well it would be 30 pairs -> 24 + 5, so these numbers *are* the assertion
+    # that the test task was excluded.
+    assert (n_train, n_valid) == (16, 3)
+    assert n_test == 10
+
+
+@pytest.mark.usefixtures("fake_cvat")
+def test_project_ids_accept_ui_text() -> None:
+    handler = DataHandler(
+        args_data=_config(
+            cvat={
+                "task_ids_train": "",
+                "task_ids_test": f"[{TEST}]",
+                "project_ids_train": str(CVAT_PROJECT),
+                "project_ids_test": "",
+            }
+        ),
+        task_model="detect",
+    )
+
+    dataset_dir = Path(handler.export())
+
+    assert len(list((dataset_dir / "test" / "images").iterdir())) == 10

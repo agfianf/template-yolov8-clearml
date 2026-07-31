@@ -131,8 +131,17 @@ args_task = {
 
 args_data = {
     "cvat": {
+        # Two ways to name sources, and they add up: list tasks directly, or name
+        # whole projects and let every task in them be fetched. Projects are the
+        # simpler knob -- a task added in CVAT later is then picked up on the next
+        # run instead of being silently left out of training.
         "task_ids_train": [741, 733, 731, 728],
         "task_ids_test": [730],
+        # Every task of these projects. Whatever ends up in the test set is
+        # subtracted from training, so setting one task of a training project as
+        # `task_ids_test` does the obvious thing rather than leaking it into both.
+        "project_ids_train": [],
+        "project_ids_test": [],
     },
     "label_studio": {
         "project_id_train": None,
