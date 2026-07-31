@@ -57,8 +57,11 @@ def _expand(
     for project_id in project_ids:
         tasks = list_tasks(project_id)
         # A task with no frames exports an empty archive and then fails in the
-        # converter with a much less obvious message.
-        usable = [t for t in tasks if (t.get("size") or 0) > 0]
+        # converter with a much less obvious message. Skipped only when `size`
+        # is present and zero: a CVAT version that stops returning the field at
+        # all must not silently drop every task in the project, so unknown is
+        # treated as "keep and find out".
+        usable = [t for t in tasks if t.get("size") is None or t["size"] > 0]
         empty = len(tasks) - len(usable)
         unfinished = sum(1 for t in usable if t.get("status") != COMPLETED)
 

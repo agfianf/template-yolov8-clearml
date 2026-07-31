@@ -55,6 +55,21 @@ def test_empty_tasks_are_skipped() -> None:
     assert scope.train == [1070]
 
 
+def test_a_task_without_a_size_field_is_kept() -> None:
+    """Unknown size is not zero size.
+
+    Guards the v2 path and any future CVAT version: if the field stops being
+    returned, dropping every task would look exactly like an empty project.
+    """
+    tasks = [{"id": 5, "name": "no-size", "status": "completed"}]
+
+    scope = resolve_task_scope(
+        lambda _pid: tasks, task_ids_train=[], task_ids_test=[], project_ids_train=[1]
+    )
+
+    assert scope.train == [5]
+
+
 def test_projects_and_explicit_tasks_add_up() -> None:
     scope = resolve_task_scope(
         list_tasks, task_ids_train=[900], task_ids_test=[], project_ids_train=[46]
