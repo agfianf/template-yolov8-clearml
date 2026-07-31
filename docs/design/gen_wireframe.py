@@ -2,6 +2,8 @@
 
 import json
 import math
+import sys
+
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parent / "wireframe.html"
@@ -92,15 +94,21 @@ body::before{
              0 8px 24px -12px rgba(16,24,32,.14);
   border-radius:12px;
 }
+/* Every blurred surface falls back to opaque paper together -- the lightbox scrim and
+   the thumbnail hover strip do not carry .glass, so they have to be named here or the
+   text sitting on them is read against whatever scrolls underneath. */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
-  .glass{background:var(--paper)}
+  .glass,.lb,.thumb .cap{background:var(--paper)}
 }
 @media (prefers-reduced-transparency:reduce){
-  .glass{background:var(--paper);backdrop-filter:none;-webkit-backdrop-filter:none}
+  .glass,.lb,.thumb .cap{
+    background:var(--paper);backdrop-filter:none;-webkit-backdrop-filter:none;
+  }
   body::before{display:none}
 }
 @media (forced-colors:active){
   .glass{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}
+  .lb,.thumb .cap{background:Canvas;backdrop-filter:none;-webkit-backdrop-filter:none}
   body::before{display:none}
 }
 
@@ -143,6 +151,9 @@ body::before{
   flex:none;padding:17px 0;
 }
 .nav-links a:hover{color:var(--ink)}
+/* The nav carries the active marker below the TOC breakpoint, where .toc is hidden
+   and would otherwise leave a scrolling reader with no position indicator at all. */
+.nav-links a.on{color:var(--ink);font-weight:500;box-shadow:inset 0 -2px 0 var(--ink)}
 .tgl{
   font:500 12.5px/1 var(--font-sans);color:var(--ink-2);cursor:pointer;
   background:transparent;border:1px solid var(--rule);border-radius:7px;
@@ -274,6 +285,10 @@ figcaption{
 }
 figcaption b{font-weight:500;color:var(--ink-2)}
 svg.chart{width:100%;height:auto;display:block;overflow:visible}
+/* Printed labels sit on top of the mark that carries the data-tip, and the tooltip
+   resolves its target with closest('[data-tip]'). Without this, hovering the middle
+   of a matrix cell -- where its own count is drawn -- finds no tooltip at all. */
+svg.chart text{pointer-events:none}
 
 /* chart primitives (zero hex inside svg) */
 .gl{stroke:var(--grid);stroke-width:1;vector-effect:non-scaling-stroke;fill:none}
@@ -563,7 +578,11 @@ td .ex{display:block;width:40px;height:26px}
 
 /* ---------------------------- print ------------------------------------ */
 @media print{
-  :root{--ink:#1B1D1E;--paper:#FFFFFF;--brand-cyan-ink:#017BA8;
+  /* Has to match the specificity of :root[data-theme="dark"] and
+     :root:not([data-theme="light"]), or printing after the theme toggle keeps the
+     dark palette and lays near-white ink on white paper. */
+  :root,:root[data-theme="dark"],:root[data-theme="light"]{
+        --ink:#1B1D1E;--paper:#FFFFFF;--brand-cyan-ink:#017BA8;
         --brand-teal-ink:#457F74;--brand-lime-ink:#618B36;
         --good:#0ca30c;--warn:#b57614;--serious:#AD2111}
   body::before{display:none}
@@ -574,7 +593,9 @@ td .ex{display:block;width:40px;height:26px}
   .sheet{background:none;padding:0;margin:0;max-width:none}
   .wrap{display:block;max-width:none;padding:0}
   .gal{max-height:none;overflow:visible;-webkit-mask-image:none;mask-image:none}
-  .ov-outcome{opacity:1}
+  /* No overlay rule here on purpose: the [data-tab]/[data-anno] rules already pick
+     exactly one layer, and forcing .ov-outcome visible printed it stacked on top of
+     the prediction layer, and printed it at all with annotations switched off. */
   .anno,.tabs{display:none}
   details{display:block}
   section{break-inside:avoid}
@@ -616,7 +637,7 @@ def ring(frac, tip):
     circ = 2 * math.pi * r
     d = circ * max(0.0, min(1.0, frac))
     return (f'<svg class="ring" viewBox="0 0 30 30" role="img" data-tip="{tip}" '
-            f'aria-label="{tip}"><title>{tip}</title>'
+            f'aria-label="{tip}">'
             f'<circle class="rk" cx="15" cy="15" r="{r}"/>'
             f'<circle class="ra" cx="15" cy="15" r="{r}" '
             f'stroke-dasharray="{d:.2f} {circ - d:.2f}" '
@@ -659,7 +680,7 @@ def chart_instances():
         y = top + i * (bh + gap)
         w = sx(val) - X0
         s.append(f'<rect class="f-{col}" x="{X0:.1f}" y="{y}" width="{w:.1f}" '
-                 f'height="{bh}" rx="2" data-tip="{tip}"><title>{tip}</title></rect>')
+                 f'height="{bh}" rx="2" data-tip="{tip}"></rect>')
         s.append(f'<text class="b-lbl" x="{X0-10:.0f}" y="{y+bh/2+4:.0f}" '
                  f'text-anchor="end">{name}</text>')
         s.append(f'<text class="dl f-{col}" x="{X0+w+9:.1f}" y="{y+bh/2+4:.0f}">'
@@ -710,7 +731,7 @@ def chart_heat():
         tip = f"column {c + 1} of {NX}, row {r + 1} of {NY} &#183; {v} box centres"
         s.append(f'<rect class="hm-{step}" x="{x:.0f}" y="{y:.0f}" '
                  f'width="{CS - 1:.0f}" height="{CS - 1:.0f}" rx="1" '
-                 f'data-tip="{tip}"><title>{tip}</title></rect>')
+                 f'data-tip="{tip}"></rect>')
     hot = []
     for c, r, v in sorted(cells, key=lambda t: -t[2]):
         if all(abs(c - hc) > 1 or abs(r - hr) > 1 for hc, hr, _ in hot):
@@ -774,7 +795,7 @@ def chart_matrix():
                    f"&#183; illustrative")
             s.append(f'<rect class="hm-{step}" x="{x:.0f}" y="{y:.0f}" '
                      f'width="{CS - 1.5:.1f}" height="{CS - 1.5:.1f}" rx="1.5" '
-                     f'data-tip="{tip}"><title>{tip}</title></rect>')
+                     f'data-tip="{tip}"></rect>')
             cls = "hm-lbl" if step >= 5 else "hm-lbl-d"
             s.append(f'<text class="{cls}" x="{x + (CS - 1.5) / 2:.1f}" '
                      f'y="{y + CS / 2 + 2:.1f}" text-anchor="middle">{v}</text>')
@@ -799,9 +820,13 @@ def chart_tide():
         ("Dupe", 0.0005, "f-g3", "", "out", "409"),
         ("Cls", 0.0001, "f-g3", "", "out", "517"),
     ]
-    MINW, GAP = 7.0, 2.0
+    # The gap between segments is carved out of each segment, never added after it.
+    # A minimum width that advanced the cursor inflated the three sub-pixel segments
+    # until the bar ran past the dashed 0.450 ceiling drawn on the same scale, which
+    # is the one reading the caption explicitly denies.
+    GAP, HAIR = 2.0, 0.75
     BY, BH = 48, 32
-    s = ['<svg class="chart" viewBox="0 0 660 174" role="img" '
+    s = ['<svg class="chart" viewBox="0 0 660 190" role="img" '
          'aria-label="TIDE error decomposition, delta AP50 per error type">']
     for val, lab, ly, tip in (
             (0.0970, "&#916;AP_FN 0.097", 15,
@@ -810,38 +835,49 @@ def chart_tide():
              "false-positive oracle &#183; ceiling &#916;AP50 0.450")):
         x = X0 + val * sc
         s.append(f'<line class="ref" x1="{x:.1f}" y1="{ly+5}" x2="{x:.1f}" '
-                 f'y2="{BY+BH+6}" data-tip="{tip}"><title>{tip}</title></line>')
+                 f'y2="{BY+BH+6}" data-tip="{tip}"></line>')
         anchor = "start" if val < 0.25 else "end"
         lx = x + 6 if val < 0.25 else x - 6
         s.append(f'<text class="dl f-peer" x="{lx:.1f}" y="{ly}" '
                  f'text-anchor="{anchor}">{lab}</text>')
     x = X0
     outs = []
+    tiny_x0 = tiny_x1 = None
     for name, val, cls, tcls, mode, cnt in segs:
-        w = max(val * sc, MINW)
+        span = val * sc
+        w = max(span - GAP, HAIR)
         tip = f"{name} &#183; &#916;AP50 {val:.4f} &#183; {cnt} boxes"
         s.append(f'<rect class="{cls}" x="{x:.1f}" y="{BY}" width="{w:.1f}" '
-                 f'height="{BH}" rx="1.5" data-tip="{tip}"><title>{tip}</title></rect>')
+                 f'height="{BH}" rx="1.5" data-tip="{tip}"></rect>')
         if mode == "in":
             s.append(f'<text class="seg-t {tcls}" x="{x+9:.1f}" y="{BY+14}">{name}</text>')
             s.append(f'<text class="seg-t {tcls}" x="{x+9:.1f}" y="{BY+26}">'
                      f'{val:.4f}</text>')
         else:
-            outs.append((name, val, x + w / 2))
-        x += w + GAP
+            outs.append((name, val))
+            tiny_x0 = x if tiny_x0 is None else tiny_x0
+            tiny_x1 = x + span
+        x += span
     s.append(f'<line class="gl" x1="{X0}" y1="{BY-10}" x2="{X0}" y2="{BY+BH+8}"/>')
     for t in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5):
         tx = X0 + t * sc
         s.append(f'<text class="tk" x="{tx:.1f}" y="{BY+BH+22}" '
                  f'text-anchor="middle">{t:.1f}</text>')
-    rows = [146, 132, 118]
+    # One leader for the whole tail, not one per segment: to scale these three are
+    # 7px between them, so three separate stubs would be drawn on top of each other
+    # and imply a precision the axis cannot carry.
+    # Clear of the tick row at BY+BH+22, or the elbow is drawn through the axis labels.
+    rows = [132, 146, 160]
     lx_end = 536
-    for (name, val, cx), ly in zip(outs, rows):
-        s.append(f'<path class="lead" d="M{cx:.1f} {BY+BH+2} L{cx:.1f} {ly-4} '
-                 f'L{lx_end} {ly-4}"/>')
+    if outs and tiny_x0 is not None:
+        cx = (tiny_x0 + tiny_x1) / 2
+        elbow = BY + BH + 38
+        s.append(f'<path class="lead" d="M{cx:.1f} {BY+BH+2} L{cx:.1f} {elbow} '
+                 f'L{lx_end} {elbow}"/>')
+    for (name, val), ly in zip(outs, rows):
         s.append(f'<text class="dl f-ink2" x="{lx_end+6}" y="{ly}">{name} '
                  f'<tspan class="f-peer">{val:.4f}</tspan></text>')
-    s.append(f'<text class="axl" x="{X0}" y="{168}">'
+    s.append(f'<text class="axl" x="{X0}" y="{184}">'
              '&#916;AP50 an oracle would recover by fixing only that error</text>')
     s.append("</svg>")
     return "\n".join(s)
@@ -898,7 +934,7 @@ def chart_prf():
         for c, v in zip(conf, vals):
             tip = f"{nm} {v:.4f} at conf {c:.2f}"
             s.append(f'<circle class="hit" cx="{sx(c):.1f}" cy="{sy(v):.1f}" r="7" '
-                     f'data-tip="{tip}"><title>{tip}</title></circle>')
+                     f'data-tip="{tip}"></circle>')
     s.append("</svg>")
     return "\n".join(s)
 
@@ -930,11 +966,10 @@ def chart_hist():
                f"image{'' if c == 1 else 's'}")
         if c:
             s.append(f'<rect class="f-cyan" x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" '
-                     f'height="{YB-y:.1f}" rx="1" data-tip="{tip}">'
-                     f'<title>{tip}</title></rect>')
+                     f'height="{YB-y:.1f}" rx="1" data-tip="{tip}"></rect>')
         s.append(f'<rect class="hit" x="{X0 + i * slot:.1f}" y="{YT-6}" '
                  f'width="{slot:.1f}" height="{YB - YT + 6:.1f}" data-tip="{tip}">'
-                 f'<title>{tip}</title></rect>')
+                 f'</rect>')
     pk = counts.index(max(counts))
     px = X0 + pk * slot + slot / 2
     s.append(f'<text class="dl f-cyan" x="{px:.1f}" y="{sy(23)-7:.1f}" '
@@ -990,7 +1025,7 @@ def chart_res():
         w = max(sx(val) - X0, 1.5)
         tip = f"{name} &#183; {val} images &#183; {tip_extra}"
         s.append(f'<rect class="f-{col}" x="{X0:.1f}" y="{y}" width="{w:.1f}" '
-                 f'height="{bh}" rx="2" data-tip="{tip}"><title>{tip}</title></rect>')
+                 f'height="{bh}" rx="2" data-tip="{tip}"></rect>')
         s.append(f'<text class="b-lbl" x="{X0-10}" y="{y+bh/2+4:.0f}" '
                  f'text-anchor="end">{name}</text>')
         s.append(f'<text class="dl f-{col}" x="{X0+w+8:.1f}" y="{y+bh/2+4:.0f}">'
@@ -1016,8 +1051,7 @@ def chart_aspect():
     for lab, frac, cls, mode, tip in segs:
         w = max(frac * W - GAP, 2.0)
         s.append(f'<rect class="{cls}" x="{x:.1f}" y="{Y}" width="{w:.1f}" '
-                 f'height="{BH}" rx="1.5" data-tip="{lab} &#183; {tip}">'
-                 f'<title>{lab} &#183; {tip}</title></rect>')
+                 f'height="{BH}" rx="1.5" data-tip="{lab} &#183; {tip}"></rect>')
         if mode == "in":
             s.append(f'<text class="seg-t f-paper" x="{x+8:.1f}" y="{Y+10.5:.0f}">'
                      f'{lab}</text>')
@@ -1063,11 +1097,10 @@ def chart_mp():
         if c:
             y = min(sy(c), YB - 2)
             s.append(f'<rect class="f-cyan" x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" '
-                     f'height="{YB-y:.1f}" rx="1" data-tip="{tip}">'
-                     f'<title>{tip}</title></rect>')
+                     f'height="{YB-y:.1f}" rx="1" data-tip="{tip}"></rect>')
         s.append(f'<rect class="hit" x="{X0 + i * slot:.1f}" y="{YT-8}" '
                  f'width="{slot:.1f}" height="{YB - YT + 8:.1f}" data-tip="{tip}">'
-                 f'<title>{tip}</title></rect>')
+                 f'</rect>')
     pk = counts.index(max(counts))
     px = X0 + pk * slot + (slot - bw) / 2
     s.append(f'<text class="dl f-cyan" x="{px-7:.1f}" y="{sy(510)+13:.1f}" '
@@ -1115,7 +1148,7 @@ def chart_epochs():
         w = max(sx(sec) - X0, 1.5)
         tip = f"epoch {name} &#183; {sec} s &#183; {_ms(sec)}"
         s.append(f'<rect class="f-cyan" x="{X0:.1f}" y="{y}" width="{w:.1f}" '
-                 f'height="{bh}" rx="2" data-tip="{tip}"><title>{tip}</title></rect>')
+                 f'height="{bh}" rx="2" data-tip="{tip}"></rect>')
         s.append(f'<text class="b-lbl" x="{X0-9}" y="{y+bh/2+4:.0f}" '
                  f'text-anchor="end">epoch {name}</text>')
         s.append(f'<text class="dl f-cyan" x="{X0+w+8:.1f}" y="{y+bh/2+4:.0f}">'
@@ -1378,16 +1411,21 @@ JS = """
   });
 })();
 
-/* ---- floating TOC: active section via IntersectionObserver ---- */
+/* ---- active section via IntersectionObserver ---- */
+/* Tracks the nav links as well as the TOC: the TOC is hidden below 1400px, and on a
+   1280-wide laptop that left an eleven-section report with no position marker at all. */
 (function () {
-  var links = [].slice.call(document.querySelectorAll('.toc a'));
+  var links = [].slice.call(document.querySelectorAll('.toc a, .nav-links a'));
   if (!links.length || !window.IntersectionObserver) { return; }
+  var order = [].slice.call(document.querySelectorAll('.toc a'))
+    .map(function (a) { return a.hash.slice(1); });
   var seen = {};
   function paint() {
-    var on = links.filter(function (a) { return seen[a.hash.slice(1)]; })[0] || links[0];
+    var id = order.filter(function (s) { return seen[s]; })[0] || order[0];
     links.forEach(function (a) {
-      a.classList.toggle('on', a === on);
-      if (a === on) { a.setAttribute('aria-current', 'true'); }
+      var on = a.hash.slice(1) === id;
+      a.classList.toggle('on', on);
+      if (on) { a.setAttribute('aria-current', 'true'); }
       else { a.removeAttribute('aria-current'); }
     });
   }
@@ -1395,8 +1433,8 @@ JS = """
     es.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
     paint();
   }, { rootMargin: '-56px 0px -62% 0px' });
-  links.forEach(function (a) {
-    var el = document.getElementById(a.hash.slice(1));
+  order.forEach(function (s) {
+    var el = document.getElementById(s);
     if (el) { io.observe(el); }
   });
   paint();
@@ -1487,7 +1525,12 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'ArrowRight') { open_(idx + 1); }
 });
 addEventListener('resize', function () { if (LB.classList.contains('on')) draw(idx); });
-if (/^#lb=\\d+$/.test(location.hash)) { open_(+location.hash.slice(4) - 1); }
+/* Range-check the deep link rather than letting open_'s cycling modulo wrap it:
+   #lb=0 used to open the last image and #lb=99 an unrelated one, both silently. */
+if (/^#lb=\\d+$/.test(location.hash)) {
+  var want = +location.hash.slice(4);
+  if (want >= 1 && want <= SHOTS.length) { open_(want - 1); }
+}
 
 /* ---- gallery: tab strip, global annotation switch, soft scroll edges ---- */
 (function () {
@@ -1532,8 +1575,12 @@ if (/^#lb=\\d+$/.test(location.hash)) { open_(+location.hash.slice(4) - 1); }
   sw.addEventListener('click', function () { anno(!ANNO); });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'a' && e.key !== 'A') { return; }
+    /* Bare 'a' only -- without this, Ctrl+A / Cmd+A to select the page text also
+       cleared every overlay in the gallery. */
+    if (e.ctrlKey || e.metaKey || e.altKey) { return; }
     var t = e.target;
     if (t && /^(input|textarea|select)$/i.test(t.tagName)) { return; }
+    if (t && t.isContentEditable) { return; }
     anno(!ANNO);
   });
 
@@ -2025,7 +2072,11 @@ def build():
 </html>
 """
     OUT.write_text(html, encoding="utf-8")
-    print(f"wrote {OUT} ({len(html.encode()) / 1024:.1f} KB)")
+    return f"wrote {OUT} ({len(html.encode()) / 1024:.1f} KB)\n"
 
 
-build()
+# Guarded: without this, importing the module for any reason -- a widened pytest
+# collection root, a link checker, an editor completing imports -- silently rewrote
+# the tracked wireframe.html and left an unexplained dirty working tree.
+if __name__ == "__main__":
+    sys.stdout.write(build())
