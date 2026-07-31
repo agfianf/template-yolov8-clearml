@@ -163,12 +163,13 @@ def test_setup_dataset_splits_and_writes_yaml(tmp_path: Path) -> None:
         valid_ratio=0.2,
     )
 
-    # 8 / 1, not 8 / 2: num_valid is int(10 * (1 - 0.8)) and 1 - 0.8 is
-    # 0.19999999999999996 in binary floating point, so the last pair is dropped.
-    # Asserted as-is rather than fixed -- changing it would move every existing
-    # experiment's split.
+    # 8 / 2, and 8 + 2 == 10: the splits partition the input. This used to be
+    # 8 / 1, because num_valid was int(10 * (1 - 0.8)) and 1 - 0.8 is
+    # 0.19999999999999996 in binary floating point, so the last pair fell outside
+    # every slice and was deleted with the staging directories. See
+    # tests/data/test_split_partition.py.
     assert len(list((out_dir / "train" / "images").iterdir())) == 8
-    assert len(list((out_dir / "valid" / "images").iterdir())) == 1
+    assert len(list((out_dir / "valid" / "images").iterdir())) == 2
     yaml_text = (out_dir / "data.yaml").read_text()
     assert "nc: 2" in yaml_text
     assert "train: train/images" in yaml_text

@@ -148,6 +148,12 @@ args_data = {
         "project_id_test": None,
     },
     "s3": {"s3_uri_dir_train": None, "s3_uri_dir_test": None},
+    # How the training pool is split. The three are a partition: every downloaded
+    # pair lands in exactly one split. `test_ratio` is the other way to get a
+    # `test/` directory, so it is mutually exclusive with `task_ids_test` /
+    # `project_ids_test` above and refused if both are set. Leave it None and the
+    # ratios are a two-way split: `valid_ratio` is then ignored, because valid/
+    # takes everything training does not. Set it and all three must sum to 1.
     "params": {
         "train_ratio": 0.8,
         "val_ratio": 0.2,

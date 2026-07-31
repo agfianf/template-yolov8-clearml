@@ -228,11 +228,10 @@ def test_a_training_project_excludes_its_own_test_task() -> None:
     n_valid = len(list((dataset_dir / "valid" / "images").iterdir()))
     n_test = len(list((dataset_dir / "test" / "images").iterdir()))
 
-    # Two training tasks = 20 pairs, which `split_folder_yolo` turns into 16 + 3
-    # (the documented int(20 * (1 - 0.8)) rounding). Had TEST been trained on as
-    # well it would be 30 pairs -> 24 + 5, so these numbers *are* the assertion
-    # that the test task was excluded.
-    assert (n_train, n_valid) == (16, 3)
+    # Two training tasks = 20 pairs, which `split_folder_yolo` turns into 16 + 4.
+    # Had TEST been trained on as well it would be 30 pairs -> 24 + 6, so these
+    # numbers *are* the assertion that the test task was excluded.
+    assert (n_train, n_valid) == (16, 4)
     assert n_test == 10
 
 

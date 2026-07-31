@@ -1,3 +1,4 @@
+import math
 import os
 import random
 import shutil
@@ -12,6 +13,10 @@ logger = get_logger(__name__)
 # How many filenames to show when a split fails its checks. Enough to recognise
 # the problem, not the whole listing -- these directories hold thousands.
 MAX_EXAMPLE_FILES = 5
+
+# Ratios are typed by hand into the ClearML UI, so they are compared with a
+# tolerance rather than for equality -- 0.7 + 0.2 + 0.1 is 0.9999999999999999.
+RATIO_TOLERANCE = 1e-6
 
 
 def _sample(dir_path: str) -> str:
@@ -65,6 +70,16 @@ def creating_yaml_file(source_dir, labels: list = None):
         if dir == "test":
             if is_passed:
                 use_test = True
+            else:
+                # Not fatal -- a test task whose images are not annotated yet
+                # should not stop training. But it is omitted from data.yaml and
+                # the final val() falls back to the valid split, so say so.
+                logger.warning(
+                    'split "test" invalid (images=%d labels=%d): omitted from'
+                    " data.yaml, the run will not evaluate on a test set",
+                    count_img,
+                    count_labels,
+                )
         elif not is_passed:
             # Counts and a handful of names. The previous version interpolated
             # two full os.listdir() results into one f-string.
@@ -103,11 +118,19 @@ def creating_yaml_file(source_dir, labels: list = None):
 
 
 def split_folder_yolo(source_dir, train_ratio=0.8, valid_ratio=0.2, test_ratio=None):
-    """Split folder yolo into train, valid, test (optional)
+    """Split a yolo folder into train, valid and an optional test split.
+
     source_dir: Directory path where the images and labels are located.
-    train_ratio: Ratio of the dataset to be used for training (default: 0.7).
-    valid_ratio: Ratio of the dataset to be used for validation (default: 0.15).
-    test_ratio: Ratio of the dataset to be used for testing (default: 0.15).
+    train_ratio: Fraction of the pairs that goes to `train/`.
+    valid_ratio: Fraction that goes to `valid/`. Only read when `test_ratio` is
+                 set; without a test split, `valid/` takes everything that is
+                 not training, and a `valid_ratio` that disagrees is warned about.
+    test_ratio: Fraction that goes to `test/`, or None for no test split. When
+                set, the three ratios must sum to 1.
+
+    The splits are a partition: every pair lands in exactly one of them. The
+    remainder left by integer truncation is assigned rather than discarded --
+    to `test/` when there is one, to `valid/` otherwise.
     """
     # Create train, valid, and test directories
     src_dir_images = os.path.join(source_dir, "images")
@@ -115,6 +138,17 @@ def split_folder_yolo(source_dir, train_ratio=0.8, valid_ratio=0.2, test_ratio=N
 
     if not os.path.exists(src_dir_images) and not os.path.exists(src_dir_labels):
         raise Exception("[Splitting] source_dir: images and labels directory not found")
+
+    # Checked before anything is moved: a wrong ratio should fail on the config,
+    # not halfway through a directory tree.
+    if test_ratio:
+        total_ratio = train_ratio + valid_ratio + test_ratio
+        if not math.isclose(total_ratio, 1.0, abs_tol=RATIO_TOLERANCE):
+            raise Exception(
+                f"[Splitting] train_ratio={train_ratio}, valid_ratio={valid_ratio}"
+                f" and test_ratio={test_ratio} sum to {total_ratio:g}, expected 1.0."
+                " Each ratio is the fraction of the dataset that goes to that split."
+            )
 
     dst_train_dir = os.path.join(source_dir, "train")
     dst_valid_dir = os.path.join(source_dir, "valid")
@@ -150,13 +184,34 @@ def split_folder_yolo(source_dir, train_ratio=0.8, valid_ratio=0.2, test_ratio=N
     random.seed(42)  # Ensure reproducibility across runs
     random.shuffle(ls_images_labels)
 
-    # Calculate the number of images for each set
+    # Calculate the number of images for each set. Sizes are a partition of
+    # `total_files`, so the truncation remainder is assigned to the last split
+    # instead of falling outside every slice and being deleted with the staging
+    # directories below.
     total_files = len(ls_images_labels)
     num_train = int(total_files * train_ratio)
     if test_ratio:
         num_valid = int(total_files * valid_ratio)
+        num_test = total_files - num_train - num_valid
+        if num_test <= 0:
+            raise Exception(
+                f"[Splitting] test_ratio={test_ratio} leaves no images for test/:"
+                f" train_ratio={train_ratio} and valid_ratio={valid_ratio} already"
+                f" claim {num_train + num_valid} of {total_files} pairs"
+            )
     else:
-        num_valid = int(total_files * (1 - train_ratio))
+        # No test split: valid/ takes everything that is not training, which is
+        # what the caller gets whatever `valid_ratio` says.
+        num_valid = total_files - num_train
+        num_test = 0
+        if not math.isclose(valid_ratio, 1 - train_ratio, abs_tol=RATIO_TOLERANCE):
+            logger.warning(
+                "valid_ratio=%s ignored: without a test split valid/ takes the"
+                " remaining %.2f of the pairs. Set test_ratio to size valid/"
+                " explicitly.",
+                valid_ratio,
+                1 - train_ratio,
+            )
 
     ls_train = ls_images_labels[:num_train]
     ls_valid = ls_images_labels[num_train : num_train + num_valid]
@@ -206,6 +261,19 @@ def setup_dataset(
     test_ratio=None,
     dataset_test=None,
 ):
+    # Both would produce a `test/`, and the dedicated one wins by overwriting the
+    # directory -- so the images `test_ratio` withheld from training would end up
+    # in no split at all. Refused rather than resolved: either answer silently
+    # discards what the other configuration meant.
+    if test_ratio and dataset_test:
+        raise Exception(
+            f"[Splitting] test_ratio={test_ratio} and a dedicated test set"
+            f" ({dataset_test}) are mutually exclusive -- configure one or the"
+            " other. Carve the test split out of the training images with"
+            " test_ratio, or point task_ids_test/project_ids_test at a test task"
+            " and leave test_ratio empty."
+        )
+
     creating_classes_txt(dataset_dir, label_names)
 
     split_folder_yolo(
