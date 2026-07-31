@@ -18,7 +18,7 @@ Everything about *which* images and *which* labels the run trains on lives in `a
 | `params.val_ratio` | `0.2` | float | Fraction that goes to `valid/`. **Only read when `test_ratio` is set** — without a test split, `valid/` takes everything that is not training, and a `val_ratio` that disagrees is warned about |
 | `params.test_ratio` | `None` | float or `None` | Fraction that goes to `test/`, or `None` for no test split. When set, the three ratios must sum to 1, and it is mutually exclusive with `task_ids_test` / `project_ids_test` |
 | `class_exclude` | `"stalk, foreign_object"` | comma-separated string or list | Class names whose annotations are dropped, and which reserve no class index |
-| `attributes_exclude` | `None` | `dict[str, str]` or `None` | Drop annotations whose CVAT attribute value matches. Only the **first** key of the dict is ever evaluated — see below |
+| `attributes_exclude` | `None` | `dict[str, str]` or `None` | Drop annotations whose CVAT attribute value matches. Every key is evaluated, OR'd together — see below |
 | `area_segment_min` | `0` | number | Drop annotations whose COCO `area` is strictly below this. `0` is a no-op |
 | `unify_class_order` | `True` | bool (or UI string) | Build one name → index map for every source in the run. `False` restores the legacy per-source `category_id - 1` |
 | `class_names` | `""` | comma-separated string or list | Pinned class order. Empty = derive it as the sorted union of every source |
@@ -271,37 +271,32 @@ Excluding every class is caught up front: `ValueError: class map is empty: no ca
 
 ### What it actually does
 
-Read this section carefully rather than assuming the obvious semantics, because the implementation (`src/schema/coco.py:140-166`) does not do what its shape suggests.
-
 ```python
-if attributes_excluded is not None:
+if attributes_excluded:
     for attr_name, attr_value in attributes_excluded.items():
-        attributes_dataset = set(
-            ann.attributes.get(attr_name).replace(", ", ",").replace(" ,", ",").split(",")
-        )
-        attributes_config = set(
-            attr_value.replace(", ", ",").replace(" ,", ",").split(",")
-        )
-        if attributes_dataset is None:
+        raw = ann.attributes.get(attr_name)
+        if raw is None:
             continue
 
-        if isinstance(attributes_dataset, set):
-            intersection = attributes_config.intersection(attributes_dataset)
-            if intersection:
-                ...
-                skip = True
-                break
-            break
+        report.attr_keys_seen.add(attr_name)
+        intersection = _attribute_values(attr_value) & _attribute_values(raw)
+        if intersection:
+            ...
+            skip = True
+            break  # OR semantics: one matching rule is enough
 ```
 
 Behaviour, item by item:
 
-- **The intended semantics.** `{"maturity_truth": "background"}` means: read the annotation's `maturity_truth` attribute, split both it and the configured value on commas, and drop the annotation if the two sets intersect. Multi-value attributes work — `{"tags": "blurred, occluded"}` drops anything tagged either way — and the only whitespace normalisation is `", " → ","` and `" ," → ","`, so `"a ,  b"` still leaves a token `" b"` that will not match.
-- **Only the first key of the dict is ever evaluated.** Both branches of the inner `if` end in `break`: match → `skip = True; break`, no match → `break`. So `{"maturity": "background", "quality": "bad"}` filters on `maturity` and ignores `quality` entirely, silently. If you need two attribute filters, you have one.
-- **Matching is exact and case-sensitive**, on whole comma-separated tokens. `"Background"` does not match `"background"`, and `"back"` does not match `"background"`.
-- **An annotation missing the attribute crashes the run.** `ann.attributes.get(attr_name)` returns `None` when the key is absent, and `None.replace(...)` raises `AttributeError` before the `is None` guard three lines below ever runs. That guard is dead code — by the time it is reached the value is always a `set`, which is also why the `isinstance(..., set)` check is always true. In practice CVAT emits every declared attribute on every annotation of a label that declares it, so this only bites when the attribute is declared on *some* labels: the first annotation of an unattributed label ends the run.
-- **Non-string attribute values crash the same way.** `Annotation.attributes` is typed `dict`, so a checkbox attribute arriving as a JSON boolean has no `.replace`.
+- **The semantics.** `{"maturity_truth": "background"}` means: read the annotation's `maturity_truth` attribute, split both it and the configured value on commas, and drop the annotation if the two sets intersect. Multi-value attributes work — `{"tags": "blurred, occluded"}` drops anything tagged either way.
+- **Every key is evaluated, and they are OR'd.** `{"maturity": "background", "quality": "bad"}` drops an annotation that matches *either* rule. Each entry stands alone as one exclusion, so adding a rule tightens the filter rather than loosening it, and the order the keys are written in cannot change the result. This is worth stating because OR and AND are indistinguishable on a single-key config, which is what a first attempt always uses.
+- **Comparison folds case and surrounding space**, on whole comma-separated tokens. `"Background"`, `"BACKGROUND"` and `" background "` all match `"background"`; `"back"` does not. This matches how `class_exclude` compares names.
+- **An annotation that does not carry the attribute is not a match.** CVAT writes an attribute only onto annotations of the labels that declare it, so in any project with more than one label most annotations are missing most attributes. Such an annotation is left for the remaining rules to judge, and kept if none of them match.
+- **Non-string attribute values are coerced with `str()`** before comparison, because `Annotation.attributes` is an untyped `dict` and a checkbox attribute arrives as a JSON boolean. Write the config value as text: `{"is_blurry": "true"}`.
+- **An empty configured value matches nothing.** `{"maturity_truth": ""}` drops no annotations rather than matching every annotation with an empty attribute.
 - **The filter runs after the area filter and before the class filter**, and a match sets `skip = True` rather than `continue`, so the class filter still evaluates. That only affects which reason is recorded, not the outcome.
+
+All of the above is asserted by `tests/data/test_attributes_exclude.py`. Until [issue #20](https://github.com/agfianf/template-yolov8-clearml/issues/20) was fixed, only the first key was evaluated and a missing attribute raised `AttributeError`; a config written before that fix may have been silently filtering on one rule out of several.
 
 ### Valid values
 
@@ -321,6 +316,14 @@ Nothing on its own at INFO. The count folds into the per-source annotation summa
 ```
 
 At `LOG_LEVEL=debug` you additionally get one line per annotation: `ann 88431 dropped: attribute maturity_truth in ['background']`.
+
+One WARNING is possible, emitted once at the end of the data stage rather than per source:
+
+```
+2026-07-31 09:20:44 | WARNING | src.yolov8.dataset_report | attributes_exclude: 'occluded' not carried by any annotation in any source, so nothing was dropped for it -- check the attribute name
+```
+
+It fires only when *no* source in the run carried the attribute, which in practice means the name is misspelt. A rule aimed at one CVAT task and absent from another is normal and stays silent. This exists because treating a missing attribute as "no match" is what makes a typo silent — before the fix a bad name announced itself by crashing.
 
 ---
 
@@ -590,7 +593,7 @@ Most common wins, so `speed_limit` is the displayed name. Fix it in CVAT anyway 
 3. **Ratios that do not sum to 1 with `test_ratio` set.** `0.8 / 0.2 / 0.1` sums to 1.1 and is rejected. Each ratio is that split's share of the dataset; write `0.7 / 0.2 / 0.1`.
 4. **Configuring `test_ratio` *and* `task_ids_test`.** Refused — they are two ways of producing the same `test/` directory. Pick one.
 5. **Spelling `class_exclude` with different case from CVAT.** The class map drops the name case-insensitively but the annotation filter matches case-sensitively, so the run dies with `UnknownClassError` naming a class you *did* exclude.
-6. **Putting two keys in `attributes_exclude`.** Only the first is evaluated, silently. And an annotation that does not carry the attribute crashes the run with `AttributeError`.
+6. **Misspelling an attribute name in `attributes_exclude`.** Nothing is dropped, and the run completes — the only signal is one WARNING at the end of the data stage naming the attribute.
 7. **Reading `area_segment_min` as a fraction.** It is square pixels at source resolution.
 8. **Fine-tuning with a derived class order.** Adding or excluding one class renumbers everything after it alphabetically. Pin `class_names` to the checkpoint's `names`.
 9. **Turning `unify_class_order` off to "make the old numbers come back".** It restores per-source `category_id - 1`, which is the bug, not a numbering scheme. Use it only to reproduce a specific historical run.

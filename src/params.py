@@ -177,7 +177,14 @@ args_data = {
     # A class the pinned list does not mention: `error` or `drop`. Unreachable when
     # class_names is empty, since a derived map contains every class by construction.
     "on_unknown_class": "error",
-    # "attributes_exclude": {"maturity_truth": "background"},  # noqa: ERA001
+    # Drop annotations by CVAT attribute. Every key is evaluated and they are OR'd:
+    # the example below drops an annotation that is `background` OR occluded. An
+    # annotation whose label does not declare the attribute simply does not match.
+    # Values are compared case-insensitively, and a comma lists alternatives.
+    # "attributes_exclude": {  # noqa: ERA001
+    #     "maturity_truth": "background",  # noqa: ERA001
+    #     "occluded_truth": "yes",  # noqa: ERA001
+    # },
     "attributes_exclude": None,
     "area_segment_min": 0,
 }
