@@ -384,7 +384,14 @@ def _dataset(blob: dict, num: _Figures) -> str:
             title="Object size",
             num=num,
         )
-        + fig_block(blob, "f_aspect", title="Object aspect ratio", num=num)
+        + fig_block(
+            blob,
+            "f_aspect",
+            "log(w/h), so a tall box and a wide one of the same ratio sit the same "
+            "distance either side of zero.",
+            title="Object aspect ratio",
+            num=num,
+        )
         + fig_block(
             blob,
             "f_center_heat",
@@ -407,6 +414,8 @@ def _dataset(blob: dict, num: _Figures) -> str:
         + fig_block(
             blob,
             "f_poly_vertices",
+            "Four vertices is a rectangle drawn with the polygon tool, and the mask "
+            "metric cannot tell it from a box.",
             applicable=seg,
             title="Polygon vertex count",
             num=num,
@@ -593,15 +602,36 @@ def _strata(blob: dict, num: _Figures) -> str:
             title="IoU of matched detections",
             num=num,
         )
-        + fig_block(blob, "f_recall_vs_area", title="Recall against object size", num=num)
-        + fig_block(blob, "f_recall_by_ar", title="Recall by aspect ratio", num=num)
+        + fig_block(
+            blob,
+            "f_recall_vs_area",
+            "Deciles of this split's own size distribution, in pixels at this run's "
+            "imgsz.",
+            title="Recall against object size",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_recall_by_ar",
+            "A bucket the model never recalls is usually a bucket the training split "
+            "barely had.",
+            title="Recall by aspect ratio",
+            num=num,
+        )
     )
     return _section("s-strata", "Size and shape", "Where the misses actually are.", body)
 
 
 def _boxmask(blob: dict, num: _Figures) -> str:
     body = (
-        fig_block(blob, "f_boxmask_class", title="Box against mask, per class", num=num)
+        fig_block(
+            blob,
+            "f_boxmask_class",
+            "Upper bar is box, lower is mask. A class whose two bars are the same "
+            "length was annotated as rectangles.",
+            title="Box against mask, per class",
+            num=num,
+        )
         + fig_block(
             blob,
             "f_boxmask_iou",
@@ -612,9 +642,21 @@ def _boxmask(blob: dict, num: _Figures) -> str:
             num=num,
         )
         + fig_block(
-            blob, "f_iou_overlay", title="Box and mask IoU distributions", num=num
+            blob,
+            "f_iou_overlay",
+            "Density rather than share: the box axis has 50 bins and the mask axis 11, "
+            "so their raw shares are not comparable.",
+            title="Box and mask IoU distributions",
+            num=num,
         )
-        + fig_block(blob, "f_boxmask_size", title="Mask minus box IoU by size", num=num)
+        + fig_block(
+            blob,
+            "f_boxmask_size",
+            "Signed, and every bar carries its sign: a negative bucket is one where the "
+            "mask fits worse than the box.",
+            title="Mask minus box IoU by size",
+            num=num,
+        )
     )
     return _section(
         "s-boxmask",
@@ -723,7 +765,14 @@ def _training(blob: dict, num: _Figures) -> str:
             title="Validation mAP against epoch",
             num=num,
         )
-        + fig_block(blob, "f_losses", title="Training losses against epoch", num=num)
+        + fig_block(
+            blob,
+            "f_losses",
+            "Raw loss values on one axis, so the shapes are comparable and the "
+            "magnitudes are not.",
+            title="Training losses against epoch",
+            num=num,
+        )
         + "</details>"
     )
     return _section(
