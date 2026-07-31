@@ -154,5 +154,6 @@ class HandlerS3:
         return self.output_dir
 
 if __name__ == '__main__':
+    # Placeholder on purpose: this repository is public.
     handler = HandlerS3('test-output-classification')
-    handler.export('s3://10.8.0.66:9000/')
+    handler.export('s3://<endpoint>/<bucket>/')

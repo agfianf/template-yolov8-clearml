@@ -89,15 +89,18 @@ class MinioDatasetDownloader:
 
 
 if __name__ == "__main__":
+    # Placeholders on purpose: this repository is public, so a real endpoint or
+    # key committed here is published. Point these at your own MinIO through the
+    # environment rather than by editing them in.
     downloader = MinioDatasetDownloader(
-        # endpoint="10.8.0.66:9000",
-        # access_key="bs_server_1",
-        # secret_key="zNAYleEDeCnlzaXJsd7MvXnQhPmZehIA",
-        # bucket_name="app-data-workflow",
+        # endpoint=os.environ["MINIO_ENDPOINT"],       # noqa: ERA001  host:port
+        # access_key=os.environ["MINIO_ACCESS_KEY"],   # noqa: ERA001
+        # secret_key=os.environ["MINIO_SECRET_KEY"],   # noqa: ERA001
+        # bucket_name="<bucket>",                      # noqa: ERA001
         dataset={
             "Empty": [
-                "s3://10.8.0.66:9000/app-data-workflow/dataset/Bousteud/val-stiched-named-revised/maturity/Empty/day4_part2_set11_flip_20220718150758_8ac9e9e4af33482d82561083d33555ff.jpg",
-                "s3://10.8.0.66:9000/app-data-workflow/dataset/Bousteud/val-stiched-named-revised/maturity/Empty/day1_set5_side1_20220715143154_a418890a9e5744418841051150b60315.jpg",
+                "s3://<endpoint>/<bucket>/dataset/<project>/<split>/Empty/image_a.jpg",
+                "s3://<endpoint>/<bucket>/dataset/<project>/<split>/Empty/image_b.jpg",
             ]
         },
         download_dir="./directory",
