@@ -165,7 +165,12 @@ class Coco(BaseModel):
                             break
                         break
 
-            if id2label[ann.category_id] in exclude_class:
+            # Normalized the same way the class map matches names
+            # (`name.strip().lower()`). Comparing the raw name against a
+            # lowercased list meant a CVAT label spelled `Stalk` was dropped from
+            # the class map but kept in the annotations, and the converter then
+            # failed with "add it to class_exclude" for a class already in it.
+            if id2label[ann.category_id].strip().lower() in exclude_class:
                 logger.debug(
                     "ann %s dropped: class %s excluded", ann.id, id2label[ann.category_id]
                 )

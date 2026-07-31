@@ -131,11 +131,7 @@ Four keys in `args_data["cvat"]`, and they add up rather than replace each other
 | `project_ids_test` | Every task in these projects, as the test split |
 | `task_ids_test` | Individual test tasks |
 
-**Test tasks are always subtracted from training.** That is the point of the
-project option: the batch you set aside for testing normally lives *inside* the
-training project, so expanding the project would otherwise train on it and every
-metric reported on the test split would be measured against images the model had
-already seen.
+**Test tasks are always subtracted from training.** That is the point of the project option: the batch you set aside for testing normally lives *inside* the training project, so expanding the project would otherwise train on it and every metric reported on the test split would be measured against images the model had already seen.
 
 ```python
 "cvat": {
@@ -147,31 +143,18 @@ already seen.
 # -> train 7 task(s), test 1 task(s); 1 excluded from train as test: [1181]
 ```
 
-Naming projects also means a task added in CVAT later is picked up on the next
-run, instead of being silently missing because nobody updated the id list.
+Naming projects also means a task added in CVAT later is picked up on the next run, instead of being silently missing because nobody updated the id list.
 
 Two things the resolver does on its own, both reported in that one summary line:
 
-- **Tasks with no frames are skipped** — they export an empty archive and then
-  fail in the converter with a much less obvious message.
-- **Tasks not yet in `completed` status are counted and named.** They are still
-  included, because "annotation" is the normal state of a task in active use, but
-  a partially annotated image teaches the model that a real object is background.
-  If the count surprises you, that is the number to look at.
+- **Tasks with no frames are skipped** — they export an empty archive and then fail in the converter with a much less obvious message.
+- **Tasks not yet in `completed` status are counted and named.** They are still included, because "annotation" is the normal state of a task in active use, but a partially annotated image teaches the model that a real object is background. If the count surprises you, that is the number to look at.
 
 ### Class order across sources
 
-A YOLO label file stores a class *index*; COCO stores a category *id*, and CVAT
-hands those out per project. Two projects annotated with the same label names
-still export them in a different order, and a project that never saw a label
-simply omits it — so the old `category_id - 1` made `car` index 0 in one task and
-index 1 in the next, in the same merged dataset. Nothing errored; the model just
-trained against scrambled targets.
+A YOLO label file stores a class *index*; COCO stores a category *id*, and CVAT hands those out per project. Two projects annotated with the same label names still export them in a different order, and a project that never saw a label simply omits it — so the old `category_id - 1` made `car` index 0 in one task and index 1 in the next, in the same merged dataset. Nothing errored; the model just trained against scrambled targets.
 
-`unify_class_order` (on by default) builds **one** name → index map before any
-label file is written, from the union of every source in the run — training
-tasks and the test split alike — and converts every source through it. Matching
-ignores case and surrounding whitespace. The map is logged as a single line:
+`unify_class_order` (on by default) builds **one** name → index map before any label file is written, from the union of every source in the run — training tasks and the test split alike — and converts every source through it. Matching ignores case and surrounding whitespace. The map is logged as a single line:
 
 ```
 class map (derived): 3 classes -> 0:car, 1:person, 2:speed_limit
@@ -186,11 +169,9 @@ class map (derived): 3 classes -> 0:car, 1:person, 2:speed_limit
 Two things worth knowing before a fine-tune:
 
 - **A derived order is reproducible across runs, not across a change to the class
-  list.** Rerunning the same tasks in any order gives the same map, but a new
-  label sorts into the middle and shifts every index after it. Pin `class_names`
-  to the checkpoint's own `names` before training on top of it.
+list.** Rerunning the same tasks in any order gives the same map, but a new label sorts into the middle and shifts every index after it. Pin `class_names` to the checkpoint's own `names` before training on top of it.
 - **Excluded classes take no index.** `class_exclude` removes them from the map
-  entirely, so `nc` counts only classes that can actually appear.
+entirely, so `nc` counts only classes that can actually appear.
 
 ## Model Export & Prediction
 

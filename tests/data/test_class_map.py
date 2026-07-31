@@ -120,6 +120,30 @@ def test_a_tie_in_spelling_is_broken_alphabetically(
     assert build_class_map(paths).names == build_class_map(paths[::-1]).names
 
 
+def test_class_exclude_matches_the_way_the_class_map_does(
+    write_project, tmp_path: Path
+) -> None:
+    """A differently-cased exclusion must exclude, not crash.
+
+    The class map drops the class case-insensitively; the annotation filter used
+    to compare the raw name against a lowercased list, so `Stalk` left the map
+    while its annotations stayed, and conversion died telling you to add to
+    `class_exclude` a class that was already in it.
+    """
+    a = write_project("a", ["car", "Stalk"])
+
+    _out, names, _count = Coco2Yolo(
+        src_dir=str(a), output_dir=str(tmp_path / "out")
+    ).convert(
+        use_segments=False,
+        exclude_class=["stalk"],
+        class_map=ClassMap(names=["car"]),
+    )
+
+    assert names == ["car"]
+    assert _labels_by_class(a / "labels") == {"0": 2}
+
+
 def test_empty_map_is_an_error(write_project, annotation_path) -> None:
     a = write_project("a", ["stalk"])
 
