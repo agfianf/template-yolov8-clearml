@@ -249,6 +249,21 @@ The wrapper cannot raise into validation. `note()` is wrapped, failures are tall
 
 Every input is allowed to be missing, and each absence becomes a card naming what is gone rather than an exception. No capture: no error decomposition, no strata, no galleries. `log_calibration = False`: no reliability diagram and no TP-vs-FP split. `plots = False`: no confusion matrix. No `results.csv`: no training appendix. Unreadable images: empty grids with a reason. A cleaned-up dataset directory: no split composition. Every one of them is also listed in the caveats footer, and `tests/report/test_report_degradation.py` asserts the artifact still uploads in all of them.
 
+### Reviewing a report without training again
+
+A GPU run is an eleven-minute round trip and a version bump, which is far too slow a loop for "this caption reads badly" or "that table wants one more column". `tools/report_preview.py` closes it to about a second, and there are two ways in because there are two kinds of change.
+
+```bash
+make report-preview SRC=<path or artifact URL>    # a published report, page rebuilt
+make report-fixture                               # synthetic data, every figure redrawn
+```
+
+`replay` is the one to reach for. A published page carries its whole blob in `#report-data` — everything except the figures, which `render.py` strips out because the SVG is already sitting in the markup — so the tool lifts those SVG elements back out of the old document and hands them to the renderer as if they had just been drawn. The result is the real run's numbers, thumbnails, warnings and highlights, laid out by whatever is in the working tree right now. Template, stylesheet, script, section order, wording, captions, the TOC: all live. **Figure geometry is the one thing that is frozen**, because the arrays behind each chart were never serialised; `figures.py` edits do not show up in a replay and the tool logs a warning saying so.
+
+`fixture` builds the blob the report tests use, through the real pipeline, so `figures.py` and `blob.py` changes appear — at the cost of invented numbers over sixty synthetic images. `SEG=1`, `CLASSES=n` and `OUT=` are accepted; `SRC=` and `OUT=` take a local path or, for `SRC`, the artifact URL straight out of the ClearML UI.
+
+Neither writes to ClearML and neither needs a GPU. Both print a `file://` URL to open.
+
 ### Gotchas specific to this report
 
 - **The header never reads `args_val`.** `src/train.py` overwrites `batch`, `split` and `visualize` *after* the ClearML connect, so the connected `5_Testing` group is not what the pass ran with. Every displayed validation setting comes from `validator.args`.

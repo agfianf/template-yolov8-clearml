@@ -70,6 +70,18 @@ test_fast:
 test_report:
 	PYTHONPATH=. uv run pytest tests/report -v
 
+# Re-render the report locally, without a GPU run, and print a file:// URL.
+# `SRC=` is a published evaluation_report.html -- a local path or its artifact URL --
+# whose page is rebuilt around the working tree's template, stylesheet, script and
+# section code. The figures it carries are reused as drawn, so figures.py changes need
+# report-fixture instead, which redraws all of them from the test suite's synthetic run.
+report-preview:
+	PYTHONPATH=. uv run tools/report_preview.py replay "$(SRC)" $(if $(OUT),-o "$(OUT)")
+
+report-fixture:
+	PYTHONPATH=. uv run tools/report_preview.py fixture $(if $(SEG),--seg) \
+	$(if $(CLASSES),--classes $(CLASSES)) $(if $(OUT),-o "$(OUT)")
+
 # Must mirror the Dockerfile's `uv sync --frozen --no-dev`: this file is fed to
 # Task.add_requirements(), so it defines the env a non-docker agent rebuilds.
 # Do NOT add --resolution lowest-direct; that exports floor versions, not locked ones.
