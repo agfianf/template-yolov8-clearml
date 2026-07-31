@@ -55,6 +55,8 @@ class DatasetStats:
         self.dropped_area = 0
         self.dropped_class: Counter[str] = Counter()
         self.dropped_attr: Counter[str] = Counter()
+        self.attr_rules: set[str] = set()
+        self.attr_keys_seen: set[str] = set()
 
     def reset(self) -> None:
         """Clear everything, so a second data stage does not stack onto the first."""
@@ -87,6 +89,14 @@ class DatasetStats:
                 target.update(dict(tally))
             except Exception as e:
                 logger.debug("could not fold a filter tally: %s", e)
+        # getattr, for the same reason the loop above is wrapped: callers pass
+        # report-shaped objects, and a missing field should not cost a data stage.
+        self.attr_rules |= set(getattr(report, "attr_rules", ()))
+        self.attr_keys_seen |= set(getattr(report, "attr_keys_seen", ()))
+
+    def unmatched_attribute_rules(self) -> list[str]:
+        """`attributes_exclude` names no annotation carried, in any source."""
+        return sorted(self.attr_rules - self.attr_keys_seen)
 
     @property
     def is_empty(self) -> bool:
@@ -135,6 +145,31 @@ class DatasetStats:
 # the report is emitted once at the end of the data stage. Only ever touched in the main
 # process -- the data stage runs before any dataloader exists.
 dataset_stats = DatasetStats()
+
+
+def warn_unmatched_attribute_rules(stats: DatasetStats | None = None) -> list[str]:
+    """Warn once per run about `attributes_exclude` names nothing ever carried.
+
+    Absent from one source proves nothing: CVAT writes an attribute only onto the
+    labels that declare it, so a rule aimed at one task legitimately finds nothing
+    in another, and warning per source would cry wolf on a correct config. Absent
+    from *every* source is a different claim, and almost always a misspelt
+    attribute name. That case used to announce itself by crashing on `None`;
+    treating a missing attribute as "no match" is what makes it silent, so this is
+    the replacement signal, not an extra.
+
+    Deliberately outside `report_dataset_composition`, which returns early without
+    a ClearML task -- a typo is worth hearing about on a local run too.
+    """
+    stats = stats if stats is not None else dataset_stats
+    unmatched = stats.unmatched_attribute_rules()
+    if unmatched:
+        logger.warning(
+            "attributes_exclude: %s not carried by any annotation in any source, so "
+            "nothing was dropped for it -- check the attribute name",
+            ", ".join(f"'{name}'" for name in unmatched),
+        )
+    return unmatched
 
 
 def _imbalance_figure(df: pd.DataFrame) -> go.Figure:

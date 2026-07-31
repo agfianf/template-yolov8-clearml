@@ -23,7 +23,10 @@ from src.data.task_scope import resolve_task_scope
 from src.schema.coco import Coco as CocoSchema
 from src.utils.general import read_json
 from src.utils.logging import get_logger
-from src.yolov8.dataset_report import report_dataset_composition
+from src.yolov8.dataset_report import (
+    report_dataset_composition,
+    warn_unmatched_attribute_rules,
+)
 
 
 logger = get_logger(__name__)
@@ -363,6 +366,9 @@ class DataHandler:
 
         # Once per data stage, after every source has been converted -- class balance and
         # object geometry are properties of the whole dataset, not of one CVAT task.
+        # So is "this attributes_exclude rule matched nothing anywhere", which is why it
+        # waits until here rather than firing per source.
+        warn_unmatched_attribute_rules()
         report_dataset_composition()
 
     def export(self) -> str:

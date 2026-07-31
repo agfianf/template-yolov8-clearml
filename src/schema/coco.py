@@ -9,6 +9,20 @@ from src.utils.logging import Tally, get_logger
 logger = get_logger(__name__)
 
 
+def _attribute_values(raw: object) -> set[str]:
+    """Split one CVAT attribute value into comparable tokens.
+
+    `Annotation.attributes` is an untyped dict, so a checkbox attribute arrives as
+    a `bool` and a number attribute as an `int`; `str()` lets those compare against
+    the text in the config instead of dying on `.replace`. Case is folded for the
+    same reason the class filter folds it -- a CVAT value spelled `Background` and
+    a config spelling `background` mean the same thing. Commas separate values on
+    both sides, so one rule can list alternatives and a multi-select attribute
+    matches on any of them.
+    """
+    return {token.strip().lower() for token in str(raw).split(",") if token.strip()}
+
+
 @dataclass
 class FilterReport:
     """What annotation filtering did, as counts rather than as a line per item."""
@@ -18,6 +32,12 @@ class FilterReport:
     dropped_area: int = 0
     dropped_class: Tally = field(default_factory=Tally)
     dropped_attr: Tally = field(default_factory=Tally)
+    # Which `attributes_exclude` names were configured, and which of them any
+    # annotation in this source actually carried. A name missing from one source
+    # is normal; missing from every source is a typo, and the run-level warning
+    # in src/yolov8/dataset_report.py is the only thing that says so.
+    attr_rules: set[str] = field(default_factory=set)
+    attr_keys_seen: set[str] = field(default_factory=set)
 
     @property
     def dropped(self) -> int:
@@ -117,6 +137,14 @@ class Coco(BaseModel):
         Filters are applied at the annotation level. The per-annotation decisions
         are tallied and logged as one INFO line; individual decisions go to DEBUG,
         because there is one per annotation and a dataset has tens of thousands.
+
+        `attributes_excluded` is **OR** across its keys: an annotation is dropped as
+        soon as any one rule matches it, and every key is evaluated. Each entry
+        stands alone as "drop annotations whose <attribute> is <value>", so adding
+        a rule tightens the filter. Say this out loud because OR and AND are
+        indistinguishable on a single-key config, which is what everybody tests
+        with. An annotation that does not carry the attribute at all cannot match
+        the rule and is left to the remaining rules to judge.
         """
         if exclude_class is None:
             exclude_class = []
@@ -127,6 +155,8 @@ class Coco(BaseModel):
         logger.debug("categories: %s", id2label)
 
         report = FilterReport(total=len(self.annotations or []))
+        if attributes_excluded:
+            report.attr_rules.update(attributes_excluded)
 
         for ann in self.annotations or []:
             skip = False
@@ -137,32 +167,31 @@ class Coco(BaseModel):
                 report.dropped_area += 1
                 continue
 
-            if attributes_excluded is not None:
+            if attributes_excluded:
                 for attr_name, attr_value in attributes_excluded.items():
-                    attributes_dataset = set(
-                        ann.attributes.get(attr_name)
-                        .replace(", ", ",")
-                        .replace(" ,", ",")
-                        .split(",")
-                    )
-                    attributes_config = set(
-                        attr_value.replace(", ", ",").replace(" ,", ",").split(",")
-                    )
-                    if attributes_dataset is None:
+                    raw = ann.attributes.get(attr_name)
+                    if raw is None:
+                        # CVAT writes an attribute only onto annotations of the
+                        # labels that declare it, so an absent key is ordinary and
+                        # simply means this rule cannot match here. It used to call
+                        # .replace() on the None and kill the run.
                         continue
 
-                    if isinstance(attributes_dataset, set):
-                        intersection = attributes_config.intersection(attributes_dataset)
-                        if intersection:
-                            logger.debug(
-                                "ann %s dropped: attribute %s in %s",
-                                ann.id,
-                                attr_name,
-                                sorted(intersection),
-                            )
-                            report.dropped_attr.add(attr_name, ann.id)
-                            skip = True
-                            break
+                    report.attr_keys_seen.add(attr_name)
+                    intersection = _attribute_values(attr_value) & _attribute_values(raw)
+                    if intersection:
+                        logger.debug(
+                            "ann %s dropped: attribute %s in %s",
+                            ann.id,
+                            attr_name,
+                            sorted(intersection),
+                        )
+                        report.dropped_attr.add(attr_name, ann.id)
+                        skip = True
+                        # OR semantics: one matching rule is enough, and the tally
+                        # records the rule that did it. A rule that does *not* match
+                        # falls through to the next one -- an unconditional break
+                        # here meant only the first key was ever evaluated.
                         break
 
             # Normalized the same way the class map matches names
