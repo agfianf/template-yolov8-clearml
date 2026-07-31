@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>{{CSS}}</style>
+</head>
+<body>
+<!-- href="" resolves to this document's own URL, which inside the ClearML DEBUG
+     SAMPLES iframe is the artifact URL. No JS, and the generator never has to know
+     its own address -- so the escape hatch works even if the iframe sandbox blocks
+     scripts entirely. -->
+<a class="banner" href="" target="_blank" rel="noopener">Open the full report in a new tab &rarr;</a>
+<div class="brandbar"></div>
+<div class="shell">
+<nav id="nav">{{NAV}}<button id="theme" type="button" title="Toggle light / dark">Theme</button></nav>
+<main>{{SECTIONS}}</main>
+</div>
+<div id="filterbar" hidden><span id="filtertext"></span><button id="filterclear" type="button">Clear filter</button></div>
+<div id="lb" hidden>
+  <button id="lbclose" type="button" aria-label="Close">&times;</button>
+  <div id="lbstage"><img id="lbimg" alt=""><div id="lbovl"></div></div>
+  <figcaption id="lbcap"></figcaption>
+</div>
+<style id="filter-rules"></style>
+<script type="application/json" id="report-data">{{BLOB}}</script>
+<script>{{PLOTLY_JS}}</script>
+<script>{{SORTABLE_JS}}</script>
+<script>{{REPORT_JS}}</script>
+</body>
+</html>

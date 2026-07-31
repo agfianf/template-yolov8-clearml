@@ -13,7 +13,8 @@ from ultralytics.engine.validator import BaseValidator
 from ultralytics.utils import LOGGER, TESTS_RUNNING
 from ultralytics.utils.torch_utils import model_info_for_loggers
 
-from src.params import args_visualization
+from src.params import args_train, args_visualization
+from src.report.capture import ReportCapture
 from src.utils.general import yaml_loader
 from src.utils.logging import get_logger
 from src.utils.register_model import register_model_to_clearml
@@ -40,6 +41,10 @@ logger = get_logger(__name__)
 # dataloader workers do not fire them -- so the forkserver re-import that Python 3.14
 # performs per worker cannot duplicate or race this.
 val_stats = ValStatsAccumulator()
+
+# Same reasoning, and the same lifecycle: reset alongside `val_stats` in src/train.py
+# before the standalone val(), so the final pass does not pool with the per-epoch ones.
+report_capture = ReportCapture()
 
 
 class _ValidatorRef:
@@ -310,6 +315,34 @@ def on_fit_epoch_end(trainer: BaseTrainer):
                 clearml_logger.log_mask_box_gap(gap, trainer.epoch)
 
 
+def _install_report_capture(validator: BaseValidator) -> None:
+    """Wrap `_process_batch` so the HTML report gets per-image detections and IoUs.
+
+    A different job from the matrix pinning below, and a different wrapper. That one
+    sees only detections above the display threshold and carries no IoU values;
+    `validator._process_batch` is handed the full post-NMS predictions at the NMS floor,
+    the ground truth, `im_file` and the returned `(n, 10)` IoU sweep -- and it runs even
+    with `plots=False`.
+
+    Installed on the *instance*, which shadows the class method, so
+    `SegmentationValidator._process_batch` still runs intact and the mask sweep survives.
+    Idempotent, guarded by a marker attribute, because this fires once per batch.
+    """
+    if not args_visualization.get("html_report", True):
+        return
+    # `seen` is zeroed by init_metrics, which runs before the first on_val_batch_start
+    # of every pass -- and ultralytics reuses trainer.validator for every epoch, so
+    # without this the reservoir would pool every epoch's images.
+    fresh = int(getattr(validator, "seen", 0) or 0) == 0
+    if getattr(validator, "_report_capture_installed", False):
+        if fresh and report_capture.n_images:
+            report_capture.new_pass()
+        return
+    report_capture.configure(args_visualization, seed=args_train.get("seed", 0) or 0)
+    if report_capture.install(validator):
+        logger.debug("per-image report capture installed on _process_batch")
+
+
 def on_val_batch_start(validator: BaseValidator):
     """Pin the confusion matrix's confidence threshold, decoupling it from `args.conf`.
 
@@ -326,7 +359,12 @@ def on_val_batch_start(validator: BaseValidator):
     Fires once per batch, so it is written to be idempotent; `init_metrics` (which creates
     the matrix) runs at engine/validator.py:242, before the first `on_val_batch_start` at
     :245 and before any `update_metrics` at :266.
+
+    Also the install point for the HTML report's per-image capture, which wraps a
+    different method for a different reason -- see `_install_report_capture`.
     """
+    _install_report_capture(validator)
+
     matrix = getattr(validator, "confusion_matrix", None)
     if matrix is None or getattr(matrix, "_conf_pinned", False):
         return

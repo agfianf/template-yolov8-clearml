@@ -883,6 +883,94 @@ class YOLOClearMLLogger:
             "calibration error",
         )
 
+    def upload_html_report(
+        self,
+        path: Path | str,
+        name: str = "evaluation_report",
+        preview: str = "",
+        metadata: dict[str, str] | None = None,
+        link_media: bool = True,
+    ) -> str | None:
+        """Upload one self-contained HTML file as an artifact, returning its URL.
+
+        `artifact_object` is always a **file path string**, never a directory: ClearML
+        turns a folder artifact into a zip, which the fileserver will not serve as
+        `text/html` and which is therefore unopenable in a browser. The `.html`
+        extension is what makes the fileserver hand it back with scripts enabled.
+
+        With `link_media`, the URL is additionally reported as media so the report shows
+        up in **Debug Samples** as well as **Artifacts** -- the artifact panel is not
+        where anyone looks first. Do not rely on that iframe executing the page's
+        JavaScript; the report carries its own "open in a new tab" banner for exactly
+        that reason.
+
+        Args:
+            path: The rendered HTML file.
+            name: Artifact name; also its directory on the fileserver.
+            preview: Plain-text summary shown without opening the file.
+            metadata: String map recorded beside the artifact.
+            link_media: Also report the URL under Debug Samples.
+
+        Returns:
+            The artifact URL, or None when the upload failed.
+
+        """
+        if self._task is None:
+            logger.warning("No ClearML task available to upload %s", name)
+            return None
+        try:
+            self._task.upload_artifact(
+                name,
+                artifact_object=str(path),
+                metadata=metadata or {},
+                preview=preview,
+                wait_on_upload=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to upload %s: %s", name, e)
+            return None
+
+        url = None
+        try:
+            url = self._task.artifacts[name].url
+        except Exception as e:
+            logger.warning("Uploaded %s but could not read its URL: %s", name, e)
+        if url and link_media:
+            self.link_report_media(url)
+        logger.info("uploaded %s (%s)", name, url or "no URL")
+        return url
+
+    def link_report_media(
+        self,
+        url: str,
+        title: str = "Evaluation",
+        series: str = "report",
+        iteration: int = 0,
+    ) -> bool:
+        """Surface an already-uploaded artifact URL under Debug Samples.
+
+        Args:
+            url: Absolute artifact URL.
+            title: Debug-sample title group.
+            series: Series name within the group.
+            iteration: Iteration to file it under.
+
+        Returns:
+            True if reported successfully, False otherwise.
+
+        """
+        task_logger = self._get_logger()
+        if task_logger is None or not url:
+            return False
+        try:
+            task_logger.report_media(
+                title=title, series=series, iteration=iteration, url=url
+            )
+            return True
+        except Exception as e:
+            logger.warning("Failed to link the report under Debug Samples: %s", e)
+            return False
+
     def log_plotly_figure(
         self,
         figure: go.Figure,

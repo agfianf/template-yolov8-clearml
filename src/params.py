@@ -333,4 +333,28 @@ args_visualization = {
     # on_val_batch_end capture, because ultralytics clears metrics.stats immediately
     # after processing them.
     "log_calibration": True,
+    # --- HTML evaluation report ---------------------------------------------------
+    # One self-contained interactive HTML file, uploaded as the `evaluation_report`
+    # artifact and linked under Debug Samples, built once after the final val(). Every
+    # cap below is fixed by design: report size must not track dataset size or epoch
+    # count, so grids hold N items whatever the split holds and every distribution is
+    # binned in Python before it reaches the page.
+    "html_report": True,
+    # One line each for the model card. Blank leaves a placeholder telling the reader
+    # nobody wrote one, which is more honest than an invented sentence.
+    "report_intended_use": "",
+    "report_out_of_scope": "",
+    "report_gallery_per_grid": 24,  # items per gallery grid, regardless of split size
+    "report_max_thumbnails": 200,  # hard cap on unique 192px thumbnails in the report
+    "report_thumbnail_px": 192,  # thumbnail edge in px; JPEG q80, 4:2:0
+    # Score above which a false positive joins the "missing annotation" grid: the model
+    # is confident and the labels disagree, which is usually the labels.
+    "report_high_conf_fp_threshold": 0.7,
+    "report_low_support_threshold": 30,  # below this a class is dimmed as unreliable
+    "report_tide": True,  # compute the TIDE dAP oracles (falls back to counts if off)
+    "report_tide_max_images": 4000,  # reservoir size for TIDE; bounds capture memory
+    "report_scan_labels": True,  # read the label files for the split-aware section
+    "report_cm_max_classes": 60,  # classes kept in the report's confusion heatmap
+    "report_split_bytes": 5_000_000,  # above this the galleries move to their own file
+    "report_max_bytes": 15_000_000,  # hard ceiling; above it galleries are dropped
 }
