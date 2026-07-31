@@ -15,8 +15,8 @@ Everything about *which* images and *which* labels the run trains on lives in `a
 | `s3.s3_uri_dir_train` | `None` | — | **Not implemented.** Setting it only selects the S3 branch, which logs a warning and does nothing |
 | `s3.s3_uri_dir_test` | `None` | — | **Not implemented**, as above |
 | `params.train_ratio` | `0.8` | float | Fraction of the merged training images that go to `train/` |
-| `params.val_ratio` | `0.2` | float | Fraction that goes to `valid/` — **only read when `test_ratio` is truthy** |
-| `params.test_ratio` | `None` | float or `None` | Truthy = also carve a `test/` split out of the training images. The number itself is never used as a size |
+| `params.val_ratio` | `0.2` | float | Fraction that goes to `valid/`. **Only read when `test_ratio` is set** — without a test split, `valid/` takes everything that is not training, and a `val_ratio` that disagrees is warned about |
+| `params.test_ratio` | `None` | float or `None` | Fraction that goes to `test/`, or `None` for no test split. When set, the three ratios must sum to 1, and it is mutually exclusive with `task_ids_test` / `project_ids_test` |
 | `class_exclude` | `"stalk, foreign_object"` | comma-separated string or list | Class names whose annotations are dropped, and which reserve no class index |
 | `attributes_exclude` | `None` | `dict[str, str]` or `None` | Drop annotations whose CVAT attribute value matches. Only the **first** key of the dict is ever evaluated — see below |
 | `area_segment_min` | `0` | number | Drop annotations whose COCO `area` is strictly below this. `0` is a no-op |
@@ -132,14 +132,16 @@ The resolved source name is also used as a ClearML tag — `task.add_tags(handle
 
 ### What it does
 
-`split_folder_yolo()` (`src/data/setup.py:105`) collects every image that has a matching `.txt` label, shuffles with `random.seed(42)` (fixed, so the split is reproducible across runs on the same file set), and slices:
+`split_folder_yolo()` (`src/data/setup.py:120`) collects every image that has a matching `.txt` label, shuffles with `random.seed(42)` (fixed, so the split is reproducible across runs on the same file set), and partitions:
 
 ```python
 num_train = int(total_files * train_ratio)
 if test_ratio:
     num_valid = int(total_files * valid_ratio)
+    num_test  = total_files - num_train - num_valid   # remainder lands here
 else:
-    num_valid = int(total_files * (1 - train_ratio))
+    num_valid = total_files - num_train               # remainder lands here
+    num_test  = 0
 
 ls_train = ls_images_labels[:num_train]
 ls_valid = ls_images_labels[num_train : num_train + num_valid]
@@ -147,22 +149,27 @@ if test_ratio:
     ls_test  = ls_images_labels[num_train + num_valid :]
 ```
 
-### Three things about this that surprise people
+**The sizes are a partition: every pair lands in exactly one split, and the three counts sum to the input.** `tests/data/test_split_partition.py` asserts that at several sizes and ratios. This matters because the splits are built by *moving* files and the staging `images/` and `labels/` directories are `rmtree`d afterwards — anything that falls outside every slice is not left lying around, it is deleted.
 
-**1. `val_ratio` is ignored unless `test_ratio` is set.** With the defaults (`test_ratio = None`), the valid split is `int(n * (1 - train_ratio))` — `val_ratio` is not read at all. Setting `train_ratio=0.8, val_ratio=0.1` and leaving `test_ratio` empty still gives you a 20% valid split.
+### Two things about this that surprise people
 
-**2. The documented floating-point quirk: `int(n * (1 - 0.8))` drops a pair.** `1 - 0.8` is `0.19999999999999996` in IEEE 754, so:
+**1. `val_ratio` is ignored unless `test_ratio` is set.** With the defaults (`test_ratio = None`), `valid/` takes everything that is not training — `val_ratio` is not read as a size at all. Setting `train_ratio=0.8, val_ratio=0.1` and leaving `test_ratio` empty still gives you a 20% valid split, and now logs a `WARNING` saying so:
 
-| n | `int(n * 0.8)` | `int(n * (1 - 0.8))` | placed | dropped |
-|---|---|---|---|---|
-| 10 | 8 | 1 | 9 | 1 |
-| 20 | 16 | 3 | 19 | 1 |
-| 100 | 80 | 19 | 99 | 1 |
-| 1,000 | 800 | 199 | 999 | 1 |
+```
+WARNING | src.data.setup | valid_ratio=0.1 ignored: without a test split valid/ takes the remaining 0.20 of the pairs. Set test_ratio to size valid/ explicitly.
+```
 
-The tail pair is never moved into a split, and `split_folder_yolo` then `rmtree`s the staging `images/` and `labels/` directories — so it is discarded, not left lying around. One image out of a dataset is not worth worrying about; knowing *why* the counts do not add up is, because `test_a_training_project_excludes_its_own_test_task` asserts `(16, 3)` on 20 pairs and that looks like an error otherwise. Setting `test_ratio` takes the `int(n * val_ratio)` branch instead, which does not have the quirk.
+This is deliberate — "the rest goes to valid" is what a two-way split means — but it is worth knowing that the number you typed was not used.
 
-**3. `test_ratio`'s value is never used as a size — it is a switch.** The test split is whatever is *left over* after train and valid. So `train_ratio=0.8, val_ratio=0.2, test_ratio=0.1` on 1,000 images gives train 800, valid 200, test **0**, and `creating_yaml_file` then rejects the empty split. What you meant is `train_ratio=0.7, val_ratio=0.2, test_ratio=<anything truthy>` → 700 / 200 / 100. Note also that `test_ratio=0.0` is falsy and therefore means "no test split".
+**2. With `test_ratio` set, the three ratios must sum to 1.** `train_ratio=0.8, val_ratio=0.2, test_ratio=0.1` sums to 1.1 and is rejected before any file moves:
+
+```
+[Splitting] train_ratio=0.8, valid_ratio=0.2 and test_ratio=0.1 sum to 1.1, expected 1.0. Each ratio is the fraction of the dataset that goes to that split.
+```
+
+What you meant is `train_ratio=0.7, val_ratio=0.2, test_ratio=0.1` → 700 / 200 / 100. Note that `test_ratio=0.0` is falsy and therefore means "no test split", not "an empty test split".
+
+Both of these used to be silent. Until [#19](https://github.com/agfianf/template-yolov8-clearml/issues/19), `test_ratio` was a truthiness *switch* whose numeric value was never read — the test split was whatever was left over — so `0.8/0.1/0.9` and `0.8/0.1/0.1` produced an identical 80/10/10 split, and `0.8/0.2/0.1` produced an empty `test/` that was quietly dropped from `data.yaml`. The splits were also three independent `int()` slices rather than a partition, so `int(n * (1 - 0.8))` — `1 - 0.8` is `0.19999999999999996` in IEEE 754 — discarded the tail pair of every dataset whose size ended in a `0`.
 
 ### A ratio test split is not the same thing as `task_ids_test`
 
@@ -175,7 +182,13 @@ Two different mechanisms produce a `test/` directory, and they are not interchan
 | Removed from training? | Yes, by the slicing | Yes, by `resolve_task_scope` subtracting test from train |
 | Converted through the same class map? | Trivially | Yes — `_build_class_map(train_dirs + test_dirs)` sees both |
 
-**They collide.** `setup_dataset()` (`src/data/setup.py:201`) runs the ratio split first and then, if a dedicated test source exists, does `rmtree(f"{dataset_dir}/test")` and moves the dedicated set in. So configuring both means the ratio-derived test images are **deleted**, having already been withheld from training. Pick one.
+**They are mutually exclusive, and `setup_dataset()` refuses the combination** before the split runs:
+
+```
+[Splitting] test_ratio=0.1 and a dedicated test set (dataset-yolov8-test) are mutually exclusive -- configure one or the other. Carve the test split out of the training images with test_ratio, or point task_ids_test/project_ids_test at a test task and leave test_ratio empty.
+```
+
+The refusal is issue [#19](https://github.com/agfianf/template-yolov8-clearml/issues/19). Both mechanisms produce a `test/` directory in the same place, and the dedicated one used to win by `rmtree`ing it: the ratio held images back from training, the dedicated set then overwrote the directory holding them, and those images ended up in no split at all. With `0.8 / 0.1 / 0.1` that was 10% of every image downloaded from the training tasks, deleted with no warning — the only trace was that the `split:` and `dataset ready:` log lines reported different test counts. Neither answer could be picked automatically, because either one silently discards what the other configuration meant. Pick one yourself.
 
 Either way, once `data.yaml` has a `test:` entry, `src/train.py:317` sets `args_val["split"] = "test"` for the final validation pass, and every final report is titled `Test ...` instead of `Final ...`.
 
@@ -192,8 +205,10 @@ Either way, once `data.yaml` has a `test:` entry, `src/train.py:317` sets `args_
 | Mistake | Symptom |
 |---|---|
 | `train_ratio` so high the valid split rounds to 0 | `[Creating YAML] valid folder is not valid. images=0 labels=0 ...`, preceded by an ERROR line naming the counts and a few filenames |
-| `test_ratio` set to a number that leaves no remainder | Same failure for `test` — except `test` is allowed to be invalid, in which case it is quietly omitted from `data.yaml` and the run trains on without a test split |
-| Ratios that sum to more than 1 with `test_ratio` set | `ls_test` is an empty slice; no error until the yaml check |
+| Ratios that do not sum to 1 with `test_ratio` set | `[Splitting] ... sum to 1.1, expected 1.0`, raised before any file is moved |
+| `test_ratio` so small it rounds to 0 pairs | `[Splitting] test_ratio=... leaves no images for test/`, naming how many of the pairs `train_ratio` and `valid_ratio` already claim |
+| `test_ratio` **and** `task_ids_test` both set | `[Splitting] ... are mutually exclusive`, raised before the split runs |
+| A dedicated test task whose images are not annotated yet | `WARNING ... split "test" invalid (images=0 labels=0): omitted from data.yaml, the run will not evaluate on a test set`. Not fatal — training proceeds and the final `val()` falls back to the valid split |
 | No image/label pairs at all | `[Splitting] Error. No images found in the source directory!` |
 
 ---
@@ -571,9 +586,9 @@ Most common wins, so `speed_limit` is the displayed name. Fix it in CVAT anyway 
 ## Common mistakes
 
 1. **Leaving a test task in `task_ids_train` as well.** Harmless — the resolver subtracts it and says so — but if you see `0 excluded` where you expected 1, the id you typed is not the one in the project.
-2. **Expecting `val_ratio` to be honoured without `test_ratio`.** It is not read at all in that branch. The valid split is `1 - train_ratio`.
-3. **Treating `test_ratio` as a size.** It is a switch; the test split is the leftover. `0.8 / 0.2 / 0.1` produces an empty test split and a failed yaml check.
-4. **Configuring `test_ratio` *and* `task_ids_test`.** The ratio-derived `test/` is deleted and replaced. You lose those images from every split.
+2. **Expecting `val_ratio` to be honoured without `test_ratio`.** It is not read as a size in that branch — the valid split is everything that is not training, `1 - train_ratio`. A `val_ratio` that disagrees is warned about, not applied.
+3. **Ratios that do not sum to 1 with `test_ratio` set.** `0.8 / 0.2 / 0.1` sums to 1.1 and is rejected. Each ratio is that split's share of the dataset; write `0.7 / 0.2 / 0.1`.
+4. **Configuring `test_ratio` *and* `task_ids_test`.** Refused — they are two ways of producing the same `test/` directory. Pick one.
 5. **Spelling `class_exclude` with different case from CVAT.** The class map drops the name case-insensitively but the annotation filter matches case-sensitively, so the run dies with `UnknownClassError` naming a class you *did* exclude.
 6. **Putting two keys in `attributes_exclude`.** Only the first is evaluated, silently. And an annotation that does not carry the attribute crashes the run with `AttributeError`.
 7. **Reading `area_segment_min` as a fraction.** It is square pixels at source resolution.
