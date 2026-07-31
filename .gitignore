@@ -76,3 +76,7 @@ YOLO11/
 
 # Local-only agent instructions; deliberately untracked.
 CLAUDE.md
+
+# Local Claude Code state; the settings file itself is tracked on purpose.
+.claude/worktrees/
+.claude/settings.local.json

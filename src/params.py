@@ -131,8 +131,17 @@ args_task = {
 
 args_data = {
     "cvat": {
+        # Two ways to name sources, and they add up: list tasks directly, or name
+        # whole projects and let every task in them be fetched. Projects are the
+        # simpler knob -- a task added in CVAT later is then picked up on the next
+        # run instead of being silently left out of training.
         "task_ids_train": [741, 733, 731, 728],
         "task_ids_test": [730],
+        # Every task of these projects. Whatever ends up in the test set is
+        # subtracted from training, so setting one task of a training project as
+        # `task_ids_test` does the obvious thing rather than leaking it into both.
+        "project_ids_train": [],
+        "project_ids_test": [],
     },
     "label_studio": {
         "project_id_train": None,
@@ -145,6 +154,23 @@ args_data = {
         "test_ratio": None,
     },
     "class_exclude": "stalk, foreign_object",
+    # --- class order --------------------------------------------------------------
+    # CVAT numbers categories per project, so the same label sits at a different
+    # position in every task, and a task that never saw a class simply omits it.
+    # Every task is merged into one dataset directory, so the old per-source
+    # `category_id - 1` wrote "car" and "speed_limit" to the same index. With this
+    # on, one name -> index map is built from the union of all sources -- train and
+    # test -- and every task is converted through it. Off restores the per-source
+    # numbering and exists only to reproduce an older run. See src/data/class_map.py.
+    "unify_class_order": True,
+    # Pinned order, comma-separated. Empty = the union of every source, sorted:
+    # reproducible across runs, but *not* across a change to the class list -- a new
+    # name sorts into the middle and shifts every index after it. Pin this before
+    # fine-tuning on top of an existing checkpoint, matching that model's `names`.
+    "class_names": "",
+    # A class the pinned list does not mention: `error` or `drop`. Unreachable when
+    # class_names is empty, since a derived map contains every class by construction.
+    "on_unknown_class": "error",
     # "attributes_exclude": {"maturity_truth": "background"},  # noqa: ERA001
     "attributes_exclude": None,
     "area_segment_min": 0,

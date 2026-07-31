@@ -11,6 +11,7 @@ import shutil
 
 from typing import Any
 
+from src.data.class_map import ClassMap, build_class_map, warn_if_orders_disagree
 from src.data.converter.coco2yolo import (
     Coco2Yolo,
     count_files_in_directory,
@@ -18,6 +19,7 @@ from src.data.converter.coco2yolo import (
 )
 from src.data.downloader.method.cvat import CVATHTTPDownloaderV1, CVATHTTPDownloaderV2
 from src.data.setup import setup_dataset
+from src.data.task_scope import resolve_task_scope
 from src.schema.coco import Coco as CocoSchema
 from src.utils.general import read_json
 from src.utils.logging import get_logger
@@ -25,6 +27,88 @@ from src.yolov8.dataset_report import report_dataset_composition
 
 
 logger = get_logger(__name__)
+
+
+def _as_name_list(value: Any) -> list[str]:
+    """Accept either a list or the comma-separated string the ClearML UI sends.
+
+    `class_exclude` already had to survive both -- params.py writes a string,
+    config_clearml() splits it, and the `__main__` blocks pass a list -- and the
+    new class-order keys are edited in the same UI panel.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return [str(part).strip() for part in value if str(part).strip()]
+
+
+def _as_int_list(value: Any) -> list[int]:
+    """Read a list of ids that may arrive as a list, or as UI text.
+
+    ClearML usually restores a list to a list, but a field typed by hand comes
+    back as `"1268, 1152"` or `"[1268, 1152]"`. A non-numeric entry is dropped
+    with a warning rather than crashing the run at download time, where the
+    message would be about a missing task id instead of a typo.
+    """
+    if value in (None, "", []):
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.strip("[]() ").split(",")]
+    else:
+        parts = [str(p).strip() for p in value]
+    ids = []
+    for part in parts:
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            logger.warning("ignoring non-numeric id %r", part)
+    return ids
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    """Read a flag that may arrive as a string from the ClearML UI.
+
+    `bool("false")` is True, so a plain `bool(...)` here would make turning the
+    flag off in the UI a no-op -- and the failure mode of *that* is a run that
+    silently keeps the behaviour you just switched off. Anything unrecognised
+    keeps the default rather than guessing.
+    """
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "1", "yes", "on"}:
+            return True
+        if text in {"false", "0", "no", "off"}:
+            return False
+        if text:
+            logger.warning(
+                "unify_class_order=%r is not a boolean, using %s", value, default
+            )
+        return default
+    if value is None:
+        return default
+    return bool(value)
+
+
+# Keys of args_data that configure the run rather than name a data source.
+_NON_SOURCE_KEYS = frozenset(
+    {
+        "params",
+        "class_exclude",
+        "attributes_exclude",
+        "area_segment_min",
+        "unify_class_order",
+        "class_names",
+        "on_unknown_class",
+    }
+)
+
+
+def _annotation_path(project_dir: str) -> str:
+    """Return the path of the COCO file inside a CVAT export directory."""
+    return os.path.join(project_dir, "annotations", "instances_default.json")
 
 
 class DataHandler:
@@ -44,10 +128,23 @@ class DataHandler:
         self.source_type = self._check_source()
         self.dataset_dir = os.path.join(os.getcwd(), "dataset-yolov8")
         self.dataset_test_dir = f"{self.dataset_dir}-test"
-        self.exclude_cls = self.config.get("class_exclude", []) or []
+        self.exclude_cls = _as_name_list(self.config.get("class_exclude"))
         self.attributes_exclude = self.config.get("attributes_exclude", None)
         self.area_segment_min = self.config.get("area_segment_min", None)
         self.task_model = task_model
+        # See src/data/class_map.py for what these three are for. The flag is the
+        # escape hatch back to per-source `category_id - 1`, kept only so an old
+        # task can be re-run and reproduce the indices it was trained with.
+        self.unify_class_order = _as_bool(self.config.get("unify_class_order"), True)
+        self.class_names = _as_name_list(self.config.get("class_names"))
+        self.on_unknown_class = (
+            (self.config.get("on_unknown_class") or "error").strip().lower()
+        )
+        if self.on_unknown_class not in {"error", "drop"}:
+            raise ValueError(
+                f"on_unknown_class must be 'error' or 'drop', got"
+                f" {self.on_unknown_class!r}"
+            )
 
     def _check_source(self) -> str:
         """Determine the data source type from the configuration.
@@ -65,14 +162,13 @@ class DataHandler:
         """
         source_type = set()
         for source, d in self.config.items():
-            if source in {
-                "params",
-                "class_exclude",
-                "attributes_exclude",
-                "area_segment_min",
-            }:
+            # A source is a dict of locations. The isinstance check is what keeps
+            # a *scalar* setting out without being named here -- it would
+            # otherwise reach `.items()` below and raise AttributeError. The set
+            # is still needed for the settings that are themselves dicts.
+            if source in _NON_SOURCE_KEYS or not isinstance(d, dict):
                 continue
-            for _, v in (d or {}).items():
+            for v in d.values():
                 if v not in (None, "", []):
                     source_type.add(source)
         if len(source_type) == 1:
@@ -86,7 +182,11 @@ class DataHandler:
                 shutil.rmtree(d)
 
     def _process_coco_project(
-        self, project_dir: str, output_dir: str, use_segments: bool
+        self,
+        project_dir: str,
+        output_dir: str,
+        use_segments: bool,
+        class_map: ClassMap | None = None,
     ) -> tuple:
         """Convert a COCO-format project to YOLO format.
 
@@ -98,6 +198,9 @@ class DataHandler:
             Output directory for YOLO-formatted data.
         use_segments : bool
             Whether to use segmentation masks.
+        class_map : ClassMap, optional
+            Run-wide name -> index map. None means the legacy per-source
+            `category_id - 1`.
 
         Returns
         -------
@@ -111,6 +214,20 @@ class DataHandler:
             exclude_class=self.exclude_cls,
             attributes_excluded=self.attributes_exclude,
             area_segment_min=self.area_segment_min,
+            class_map=class_map,
+            on_unknown_class=self.on_unknown_class,
+        )
+
+    def _build_class_map(self, project_dirs: list[str]) -> ClassMap | None:
+        """Return the run's class order, or None when the flag is off."""
+        annotation_paths = [_annotation_path(d) for d in project_dirs]
+        if not self.unify_class_order:
+            warn_if_orders_disagree(annotation_paths)
+            return None
+        return build_class_map(
+            annotation_paths=annotation_paths,
+            explicit_names=self.class_names,
+            exclude_class=self.exclude_cls,
         )
 
     def _get_annotation_type(self, ann_path: str) -> list[str]:
@@ -124,29 +241,55 @@ class DataHandler:
         self._cleanup_dirs()
         total_count_files = 0
         label_names = []
-        task_id_train = self.config["cvat"]["task_ids_train"]
-        task_id_test = self.config["cvat"]["task_ids_test"]
+        cvat = self.config["cvat"]
 
         is_server1, _ = CVATHTTPDownloaderV1().get_about_server()
         is_server2, _ = CVATHTTPDownloaderV2().get_about_server()
         if is_server1:
-            logger.info("cvat: server V1 detected, %d train task(s)", len(task_id_train))
+            logger.info("cvat: server V1 detected")
             cvat_http = CVATHTTPDownloaderV1()
         elif is_server2:
-            logger.info("cvat: server V2 detected, %d train task(s)", len(task_id_train))
+            logger.info("cvat: server V2 detected")
             cvat_http = CVATHTTPDownloaderV2()
         else:
             raise ValueError("CVAT Server not found")
 
-        # Process training projects
-        for project_dir in cvat_http.get_local_dataset_coco(
+        # Projects are expanded into tasks here, and test tasks are subtracted
+        # from the training set -- the test batch usually lives *inside* the
+        # training project, so without this it would be trained on as well.
+        scope = resolve_task_scope(
+            list_tasks=cvat_http.list_tasks_of_project,
+            task_ids_train=_as_int_list(cvat.get("task_ids_train")),
+            task_ids_test=_as_int_list(cvat.get("task_ids_test")),
+            project_ids_train=_as_int_list(cvat.get("project_ids_train")),
+            project_ids_test=_as_int_list(cvat.get("project_ids_test")),
+        )
+        task_id_train, task_id_test = scope.train, scope.test
+
+        # Download everything first, train and test alike. The class map has to be
+        # built from all of them before the first label file is written, and the
+        # downloader returns a list rather than a generator, so nothing is lost by
+        # pulling the test tasks early -- a broken test task now fails before an
+        # hour of conversion instead of after it.
+        train_dirs = cvat_http.get_local_dataset_coco(
             task_ids=task_id_train,
             annotations_only=False,
-        ):
-            ann_train_val = os.path.join(
-                project_dir, "annotations", "instances_default.json"
+        )
+        test_dirs = (
+            cvat_http.get_local_dataset_coco(
+                task_ids=task_id_test, annotations_only=False
             )
-            annotation_type = self._get_annotation_type(ann_train_val)
+            if task_id_test
+            else []
+        )
+
+        class_map = self._build_class_map(train_dirs + test_dirs)
+        if class_map is not None:
+            label_names = list(class_map.names)
+
+        # Process training projects
+        for project_dir in train_dirs:
+            annotation_type = self._get_annotation_type(_annotation_path(project_dir))
             logger.debug(
                 "%s: annotation_type=%s, task_model=%s",
                 project_dir,
@@ -156,25 +299,28 @@ class DataHandler:
             use_segments = (
                 "segmentation" in annotation_type and self.task_model != "detect"
             )
-            output_train, label_names, countfiles = self._process_coco_project(
+            _output, names, countfiles = self._process_coco_project(
                 project_dir=project_dir,
                 output_dir=self.dataset_dir,
                 use_segments=use_segments,
+                class_map=class_map,
             )
+            # Only meaningful without a class map, and only then because there is
+            # nothing better: whichever task converted last names every class.
+            if class_map is None:
+                label_names = names
             total_count_files += countfiles
 
         # Process test projects if provided
-        if task_id_test:
-            for project_dir in cvat_http.get_local_dataset_coco(
-                task_ids=task_id_test, annotations_only=False
-            ):
-                ann_test = os.path.join(
-                    project_dir, "annotations", "instances_default.json"
-                )
-                annotation_type = self._get_annotation_type(ann_test)
+        if test_dirs:
+            for project_dir in test_dirs:
+                annotation_type = self._get_annotation_type(_annotation_path(project_dir))
                 use_segments = "segmentation" in annotation_type
                 _, _, countfiles = self._process_coco_project(
-                    project_dir, self.dataset_test_dir, use_segments
+                    project_dir,
+                    self.dataset_test_dir,
+                    use_segments,
+                    class_map=class_map,
                 )
                 total_count_files += countfiles
         else:

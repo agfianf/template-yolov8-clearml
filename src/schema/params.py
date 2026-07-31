@@ -65,6 +65,8 @@ class TaskParams(BaseModel):
 class CVATParams(BaseModel):
     task_ids_train: list[int] = Field(default_factory=lambda: [48], description="CVAT task IDs for training")  # noqa: E501
     task_ids_test: list[int] = Field(default_factory=list, description="CVAT task IDs for testing")  # noqa: E501
+    project_ids_train: list[int] = Field(default_factory=list, description="Every task of these projects, minus the test tasks")  # noqa: E501
+    project_ids_test: list[int] = Field(default_factory=list, description="Every task of these projects, used for testing")  # noqa: E501
 
 
 # fmt: off
@@ -97,6 +99,17 @@ class DataParams(BaseModel):
         default_factory=DataParamsInner, description="Data split ratios"
     )
     class_exclude: Any | None = Field(None, description="Classes to exclude")
+    unify_class_order: bool = Field(
+        True,
+        description="One class order for every source, not each source's own ids",
+    )
+    class_names: Any | None = Field(
+        None,
+        description="Pinned class order, comma-separated; empty derives it",
+    )
+    on_unknown_class: Literal["error", "drop"] = Field(
+        "error", description="A class the pinned class_names does not list"
+    )
     attributes_exclude: Any | None = Field(None, description="Attributes to exclude")
     area_segment_min: int = Field(0, description="Minimum area for segments")
 
