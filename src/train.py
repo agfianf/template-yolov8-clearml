@@ -14,11 +14,13 @@ from src.config import settings  # noqa: F401
 from src.data.setup import cleanup_cache
 from src.initizalization import init_ultralytics_settings
 from src.params import args_console
+from src.report import build_evaluation_report
 from src.utils.clearml_settings import config_clearml, init_clearml
 from src.utils.general import get_task_yolo_name, model_name_handler, yaml_loader
 from src.utils.logging import get_logger, resolve_level, set_log_level, set_progress_mode
 from src.yolov8.callbacks import (
     callbacks,
+    report_capture,
     report_validation_analysis,
     val_stats,
     validator_ref,
@@ -316,6 +318,11 @@ def main():
     if datadotyaml.get("test"):
         args_val["split"] = "test"
 
+    # Bound before the try so the report below still builds -- degraded, and saying so --
+    # when validation itself failed.
+    final_metrics = None
+    split_label = "Test " if args_val["split"] == "test" else "Final "
+
     try:
         args_val["batch"] = 32
         # `visualize` makes ultralytics write a GT/FP/TP/FN panel per validated image
@@ -324,6 +331,7 @@ def main():
         # never during training. Only the worst N panels are then uploaded.
         args_val["visualize"] = args_visualization.get("log_worst_images", True)
         val_stats.reset()
+        report_capture.reset()
         final_metrics = model_yolo.val(data=data_yaml_file, **args_val)
 
         # on_train_end does not fire for a standalone val(), so nothing would otherwise
@@ -347,6 +355,29 @@ def main():
         _report_final_scalars(final_metrics, split_label)
     except Exception as e:
         logger.exception("Error during validation: %s", e)
+
+    # One self-contained interactive HTML file, uploaded as an artifact and linked under
+    # Debug Samples. Its own try/except: a failed report must never cost the export and
+    # prediction stages that follow it at the end of a GPU run.
+    try:
+        build_evaluation_report(
+            task=task,
+            validator=validator_ref.current,
+            final_metrics=final_metrics,
+            trainer=getattr(model_yolo, "trainer", None),
+            val_stats=val_stats,
+            capture=report_capture,
+            dataset_dir=dataset_folder,
+            datadotyaml=datadotyaml,
+            class_2_idx=class_2_idx,
+            task_yolo=task_yolo,
+            split_label=split_label,
+            args_train=args_train,
+            args_val=args_val,
+            args_visualization=args_visualization,
+        )
+    except Exception as e:
+        logger.exception("Error building the evaluation report: %s", e)
 
     # Export ============================
     logger.info("[Exporting Model]")

@@ -21,6 +21,20 @@
 | `log_worst_images` | `True` | bool | Worst-N image table, the GT/FP/TP/FN gallery, and `args_val["visualize"]` |
 | `worst_images_limit` | `16` | int | How many rows and panels the worst-N reports contain |
 | `log_calibration` | `True` | bool | TP-vs-FP confidence split, reliability diagram, and the ECE scalar |
+| `html_report` | `True` | bool | Build and upload the interactive HTML evaluation report |
+| `report_intended_use` | `""` | str | One line for the model card: what this model is for |
+| `report_out_of_scope` | `""` | str | One line for the model card: what it must not be used for |
+| `report_gallery_per_grid` | `24` | int | Items per gallery grid, fixed regardless of split size |
+| `report_max_thumbnails` | `200` | int | Hard cap on unique 192px thumbnails in the whole report |
+| `report_thumbnail_px` | `192` | int | Thumbnail edge in px; JPEG q80, 4:2:0 |
+| `report_high_conf_fp_threshold` | `0.7` | float | Score above which a false positive joins the "missing annotation" grid |
+| `report_low_support_threshold` | `30` | int | Below this instance count a class is dimmed as unreliable |
+| `report_tide` | `True` | bool | Compute the ΔAP oracles; off falls back to error counts |
+| `report_tide_max_images` | `4000` | int | Reservoir size for the error decomposition; bounds capture memory |
+| `report_scan_labels` | `True` | bool | Read the on-disk label files for the split-aware dataset section |
+| `report_cm_max_classes` | `60` | int | Classes kept in the report's confusion heatmap |
+| `report_split_bytes` | `5_000_000` | int | Above this the galleries move into their own artifact |
+| `report_max_bytes` | `15_000_000` | int | Hard ceiling; above it the galleries are dropped, never the report |
 
 ## Where each report lands in the ClearML UI
 
@@ -41,6 +55,7 @@ ClearML routes reports by the API call used, not by the name, so it is worth hav
 | `log_calibration` | `Distributions` / `TP vs FP Confidence`, `Calibration` / `Reliability Diagram` | Plots and Scalars | once per validation pass | two plots plus one scalar; also a per-batch memory cost during validation |
 | `log_confidence_histograms` | `Distributions`, `Distributions/Per-Class` | Plots | once, prediction stage | one plot plus **one per class** |
 | `log_static_plots` | `results`, `Labels` | Plots | once, end of training | three PNG uploads |
+| `html_report` | `evaluation_report` | **Artifacts** and Debug Samples (`Evaluation`/`report`) | once, after the final `val()` | one file, ~2-3 MB, of which 1.42 MB is the vendored plotly bundle |
 
 Several reports are **not** gated by anything in this group and will keep appearing with every flag turned off: the `Metrics/*` and `Losses/Validation` scalars (`_report_metric_scalars`), `Speed/Training/epoch_time_seconds`, the model-info single values on epoch 0, the `Mosaic` and `Validation` debug-sample galleries, the `Prediction` 2×2 image grids from the prediction stage, the `Export`/`Formats` table from [`7_export.md`](7_export.md), and the dataset composition report from the data stage. This group is a volume control on the analysis layer, not a mute button for the task.
 
@@ -182,11 +197,63 @@ Re-uploads three of ultralytics' own PNGs as ClearML plots at the end of trainin
 
 The failure mode is worth knowing because it produces no error anywhere. `report_matplotlib_figure` uploads a PNG and references it by URL; if the ClearML **fileserver** cannot serve that URL, the panel renders **blank** — no exception in the console, no warning in the task log, no red anything. If your Plots tab has empty panels titled `results` or `Labels` while the Plotly plots beside them render fine, the fileserver is the suspect, and turning this flag off is the correct response until it is fixed. The interactive plots survive that failure precisely because they carry their data inline rather than by URL.
 
+## The HTML evaluation report
+
+`html_report` builds one self-contained interactive HTML file at the end of the run and uploads it as the `evaluation_report` artifact, then reports its URL as media so it also appears under **Debug Samples** → `Evaluation` / `report`. It is the only report in this group that is not a ClearML plot: it is a whole page, with a sticky nav, sortable tables, lazily-rendered Plotly charts and five thumbnail galleries with a click-to-zoom overlay. Everything else here answers one question each; this answers "what happened in this run" in one place you can send to somebody.
+
+It is built **once, from the final `val()` only** — the standalone pass `src/train.py` runs after training, on the test split when there is one. It never runs per epoch, and the training-curve appendix is the only part of it that reads anything epoch-shaped. `src/report/build.py` is called between `_report_final_scalars()` and `export_handler()`, inside its own `try/except`, so a report that fails costs the report and nothing else — the export and prediction stages after it are untouched.
+
+**Open it in a new tab.** The Debug Samples panel shows the page in an iframe whose sandbox policy is undocumented and has tightened before, so the first element on the page is a banner linking to the report's own URL with `target="_blank"`. That link is `href=""`, which the browser resolves to the current document — no JavaScript, and the generator never has to know its own address, so the escape hatch works even when the iframe blocks scripts entirely.
+
+**Nothing is fetched from the network.** The page inlines its CSS, its JavaScript, a vendored `plotly.js-cartesian-dist-min@3.7.0` bundle (1.42 MB, committed under `src/report/assets/` and re-fetchable with `make fetch-plotlyjs`, which verifies a pinned sha256) and every thumbnail as base64. `plotly.py`'s own `include_plotlyjs=True` is 4.85 MB and is banned. One CDN reference would turn half the page blank on any deployment without outbound access, with no error anywhere, so `tests/report/test_report_html.py` fails the build on any `src=`/`href=`/`url()` that is not an anchor, a `data:` URI or the deliberate outbound link to the ClearML task.
+
+### What is in it
+
+Twelve sections, in this order: header and KPI tiles; model card; dataset and split composition; the per-class table; the confusion matrix and the most-confused pairs; the operating-threshold panel; the TIDE-style error decomposition; size and shape strata; box against mask (segmentation runs only); five galleries; the training-curve appendix; and a caveats footer.
+
+Three things about it are deliberate and worth knowing before you read a number off it.
+
+**Every KPI tile prints the confidence and IoU it was computed at.** A finished task shows at least three coexisting confidence thresholds — the 0.001 NMS floor that mAP and every curve are computed at, the 0.25 display threshold the confusion matrix and every gallery are drawn at, and the F1-optimal threshold you would actually deploy at — and a metric with no stated basis is a rumour. The model card repeats the three with the run's actual numbers.
+
+**`fitness` never gets a meter or a percentage on a segmentation run.** `SegmentMetrics.fitness` is `seg.fitness() + box.fitness()`, i.e. the sum of two mAP50-95 values and therefore 0–2. The tile carries `scale: null` in the JSON blob and the renderer draws a bare number with the range spelled out.
+
+**The dataset section reads the label files on disk**, under `<dataset_dir>/{train,valid,test}/labels`, rather than the pre-split `DatasetStats` accumulated during conversion. That is what makes the split-composition table possible, and that table sorts by validation count ascending — so a class with no ground truth in the measured split, which is silently absent from mAP entirely, is the first row. Object size buckets come from **this dataset's own terciles**, printed in px, not COCO's 32²/96² absolutes, and the captions say so. Set `report_scan_labels = False` to skip the scan; the section then collapses to a banner.
+
+### Caps, and why they are not tunable upward for free
+
+Report volume must not grow with dataset size or with epoch count — the same rule as the rest of this group, applied to a file rather than to a plot count. Every distribution in the page is binned in Python before it is serialised, every gallery holds a fixed item count, and the training curves are downsampled to `MAX_CURVE_POINTS`. `tests/report/test_report_volume.py` builds the report at 50 images and at 3,000 and asserts the rendered file differs by under 5%; measured, it differs by about 0.2%.
+
+`report_gallery_per_grid` (24) × five grids is the item count, and `report_max_thumbnails` (200) is the hard ceiling on unique 192px JPEGs after deduplication — two grids referencing the same crop of the same file share one base64 string. At roughly 9 KB each, 200 thumbnails is 1.8 MB, which is most of what this project actually controls in the file. Raising either raises the file size linearly. A second, larger thumbnail tier for the lightbox was measured at ~28 KB each and is deliberately absent: the lightbox enlarges the same bytes and its caption says "192 px thumbnail, enlarged" so nobody reads the softness as a model artefact.
+
+`report_cm_max_classes` (60) truncates the confusion heatmap to the classes with the most ground truth, because that payload is O(n²); the caption states the truncation and the per-class table still carries every row up to its own 120-row cap.
+
+Above `report_split_bytes` (5 MB) the galleries move into a second artifact, `evaluation_report_galleries`, uploaded **first** so the index can link to its absolute URL — relative links between artifacts break, because each artifact name is its own directory on the fileserver. Only the index is reported as media. Above `report_max_bytes` (15 MB), reachable only by raising the caps, the builder drops the galleries entirely and adds a caveat: a degraded report at the end of a GPU run beats no report.
+
+### The per-image capture
+
+The error decomposition, the size/shape strata and the galleries all need per-image detections and ground truth, which nothing in ultralytics exposes after the fact. `on_val_batch_start` installs a wrapper on `validator._process_batch` (`src/report/capture.py`) next to the confusion-matrix pinning — a different method for a different job. That call runs once per image, receives the full post-NMS predictions at the NMS floor plus `pbatch`'s `im_file`, returns the `(n, 10)` IoU sweep, and runs even with `plots=False`. Installing it on the *instance* shadows the class method, so `SegmentationValidator._process_batch` still runs intact and `tp_m` is visible.
+
+Memory is bounded **before** accumulation, not trimmed afterwards: a seeded reservoir of at most `report_tide_max_images` (4,000) whole image records for the decomposition, five fixed-size heaps for the galleries, and fixed-size histograms for everything else — about 23 MB in total, flat in dataset size. Whole records rather than individual detections, because the ΔAP oracles re-match detections against ground truth and a half-sampled image would invent both false positives and misses the model never made. **No pixels are held during validation**; thumbnails are produced afterwards by re-reading at most the cap's worth of files from the dataset directory, which is still on disk (`cleanup_cache` deletes only `labels.cache`).
+
+The wrapper cannot raise into validation. `note()` is wrapped, failures are tallied, and after 50 of them the wrapper uninstalls itself and hands `_process_batch` back — a capture failing on every image is worth nothing and its `try` is not free at 20,000 images. Nothing is logged from inside that loop; one summary line is emitted at report time.
+
+`report_tide` chooses between two honest modes and never a silent third. On, the six error types (Cls / Loc / Both / Dupe / Bkg / Miss, at `t_f = 0.5` and `t_b = 0.1`) each get a ΔAP50 measured by an independent oracle that fixes only that error and re-runs ultralytics' own `compute_ap`, plus two ceilings for removing every false positive and every miss. Off — or with no capture — only the counts are shown and the section title says so. The counts table is rendered in both modes, so the section never changes shape between runs. Two caveats are printed in the section and are not optional reading: the six ΔAP values are **independent oracles and do not sum** to the total headroom, and the matching is **box IoU only even on a segmentation run**, because ultralytics computes and then discards the pairwise mask IoU matrix inside its segmentation `_process_batch`. The box-vs-mask section carries the mask story instead, using the quantised `tp_m` levels.
+
+### When it is not there
+
+Every input is allowed to be missing, and each absence becomes a card naming what is gone rather than an exception. No capture: no error decomposition, no strata, no galleries. `log_calibration = False`: no reliability diagram and no TP-vs-FP split. `plots = False`: no confusion matrix. No `results.csv`: no training appendix. Unreadable images: empty grids with a reason. A cleaned-up dataset directory: no split composition. Every one of them is also listed in the caveats footer, and `tests/report/test_report_degradation.py` asserts the artifact still uploads in all of them.
+
+### Gotchas specific to this report
+
+- **The header never reads `args_val`.** `src/train.py` overwrites `batch`, `split` and `visualize` *after* the ClearML connect, so the connected `5_Testing` group is not what the pass ran with. Every displayed validation setting comes from `validator.args`.
+- **`src/report/` is baked into the image like the rest of `src/`.** Editing the report has no effect on an agent until `make bump PART=patch && make build`.
+- **The whole package is new code on the validation hot path.** If a run behaves oddly during validation and you want it out of the way entirely, `html_report = False` skips both the report and the `_process_batch` wrapper.
+
 ## Scenarios
 
 ### A long hyperparameter sweep
 
-You are launching thirty short tasks and will read only the headline scalars. Set `log_worst_images = False` (this also stops ultralytics writing a panel per validated image to disk in the final pass, which is the largest single I/O cost here), `log_calibration = False` (which also skips the per-batch stats capture), `log_confidence_histograms = False` (which removes one plot per class), `log_static_plots = False`, and `log_interactive_pr_curves = False`. Keep every per-epoch scalar flag on — they cost effectively nothing and they are what you will actually compare across the sweep — and keep `log_per_class_table` on if any of your classes are rare, since a sweep that improves mAP by losing a rare class entirely looks like an improvement in the scalars alone. Then turn everything back on for the single full run you launch from the winning configuration.
+You are launching thirty short tasks and will read only the headline scalars. Set `html_report = False` first — it is the single largest artifact in the group and it also switches off the per-image `_process_batch` capture that feeds it. Then set `log_worst_images = False` (this also stops ultralytics writing a panel per validated image to disk in the final pass, which is the largest single I/O cost here), `log_calibration = False` (which also skips the per-batch stats capture), `log_confidence_histograms = False` (which removes one plot per class), `log_static_plots = False`, and `log_interactive_pr_curves = False`. Keep every per-epoch scalar flag on — they cost effectively nothing and they are what you will actually compare across the sweep — and keep `log_per_class_table` on if any of your classes are rare, since a sweep that improves mAP by losing a rare class entirely looks like an improvement in the scalars alone. Then turn everything back on for the single full run you launch from the winning configuration.
 
 Note what this does *not* do: `Metrics/*`, `Losses/Validation`, the mosaic and validation debug samples, the prediction grids and the dataset report are ungated and will still appear. If a sweep needs to be quieter than that, the lever is `args_predict["max_images"]` in [`6_predict.md`](6_predict.md) and `args_val["plots"]` in [`5_testing.md`](5_testing.md), not this group.
 
@@ -203,7 +270,7 @@ Blank panels have two distinct causes and this group distinguishes them. If the 
 Three things a reader of this group might reasonably expect are absent, all because adding them would add a dependency. They are listed here so nobody spends an afternoon looking for a flag that does not exist.
 
 - **AP small / medium / large, and AR@k.** Ultralytics has this in `coco_evaluate` (`detect/val.py:475`) but gates it on `save_json and (is_coco or is_lvis)` — never true for CVAT or S3 data — and it needs `faster-coco-eval`, which has no cp314 wheel and would be source-built inside the agent container. Without it there is no principled answer to "is this a small-object problem?"; the worst-image gallery is the qualitative substitute.
-- **TIDE's six-way error typology** (Cls / Loc / Both / Dup / Bkg / Miss). This needs `tidecv`. Notably it does *not* need COCO JSON — the barrier is only the dependency. The worst-N TP/FP/FN galleries are the stand-in.
+- ~~**TIDE's six-way error typology**~~ — **implemented**, in the HTML evaluation report rather than as ClearML plots, and without `tidecv`: `src/report/tide.py` types every false positive from the per-image capture and measures each type's ΔAP50 with an independent oracle over ultralytics' own `compute_ap`. It is box-IoU only and runs on a seeded subsample; both are stated in the section. See `report_tide` above.
 - **Boundary IoU and boundary F-score.** Mask AP under-penalizes boundary error, so mask *sharpness* is genuinely unmeasured in this template. The mask-vs-box gap tells you the mask head is weak; it cannot tell you whether the weakness is in the edges.
 
 ## Gotchas

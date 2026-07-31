@@ -1,0 +1,146 @@
+/* Report stylesheet. The theme custom properties are generated from src/report/theme.py
+   and prepended to this file at build time, so nothing here hard-codes a palette value
+   except the two places a colour must never follow the theme: the status outcomes on
+   gallery overlays, which are read as meaning rather than decoration.
+
+   Two rules are load-bearing rather than cosmetic:
+   - every <section> carries `content-visibility:auto` *and* `contain-intrinsic-size`.
+     Without the second the scrollbar jumps as sections render.
+   - a Plotly div is never inside `display:none` or a closed <details>: Plotly renders
+     zero-width there and stays that way. The training appendix observes its figures
+     from its own `toggle` handler instead. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-padding-top: 72px; }
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+h1, h2, h3 { line-height: 1.25; margin: 0 0 .4rem; font-weight: 640; }
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.15rem; }
+h3 { font-size: .95rem; }
+p { margin: 0 0 .6rem; }
+a { color: var(--link); }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.num, td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+.banner {
+  display: block; padding: .5rem 1rem; text-align: center; font-weight: 600;
+  background: var(--panel); color: var(--link); border-bottom: 1px solid var(--border);
+  text-decoration: none;
+}
+.brandbar { height: 4px; background: var(--brand-gradient); }
+
+.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 1.4rem;
+  max-width: 1500px; margin: 0 auto; padding: 1rem; }
+@media (max-width: 860px) { .shell { grid-template-columns: minmax(0, 1fr); } }
+
+nav { position: sticky; top: 8px; align-self: start; display: flex; flex-direction: column;
+  gap: 2px; font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto; }
+nav a { padding: .28rem .5rem; border-radius: 6px; color: var(--muted); text-decoration: none;
+  border-left: 3px solid transparent; }
+nav a:hover { background: var(--panel); color: var(--text); }
+nav a.active { color: var(--text); border-left-color: var(--link); background: var(--panel); }
+nav button { margin-top: .6rem; padding: .35rem .5rem; border-radius: 6px; cursor: pointer;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+
+main { min-width: 0; }
+section {
+  content-visibility: auto;            /* mandatory pair -- see the header comment */
+  contain-intrinsic-size: auto 900px;
+  margin: 0 0 1.6rem; padding: 1rem 1.1rem; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 12px;
+}
+section > .sub { color: var(--muted); font-size: 12.5px; margin-bottom: .8rem; }
+.caption { color: var(--muted); font-size: 12px; margin: .35rem 0 1rem; }
+.scrollx { overflow-x: auto; max-width: 100%; }
+
+/* --- header ---------------------------------------------------------------------- */
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .5rem 1.2rem; margin: .8rem 0 1rem; font-size: 12.5px; }
+.meta div span { color: var(--muted); display: block; font-size: 11px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: .6rem; }
+.kpi { border: 1px solid var(--border); border-top: 3px solid var(--link);
+  border-radius: 10px; padding: .6rem .7rem; }
+.kpi .lab { font-size: 11.5px; color: var(--muted); }
+.kpi .val { font-size: 1.5rem; font-variant-numeric: tabular-nums; font-weight: 650; }
+.kpi .basis { font-size: 11px; color: var(--muted); margin-top: .2rem; }
+.kpi .meter { height: 4px; border-radius: 2px; background: var(--grid); margin-top: .35rem; }
+.kpi .meter > i { display: block; height: 100%; border-radius: 2px; background: var(--link); }
+
+/* --- banners --------------------------------------------------------------------- */
+.warn { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .7rem;
+  border-radius: 8px; margin-bottom: .4rem; font-size: 12.5px; border: 1px solid var(--border); }
+.warn b { text-transform: uppercase; font-size: 10.5px; letter-spacing: .04em; }
+.warn.warning { border-left: 4px solid var(--warning); }
+.warn.serious { border-left: 4px solid var(--serious); }
+.warn.critical { border-left: 4px solid var(--critical); }
+
+/* --- tables ---------------------------------------------------------------------- */
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { padding: .32rem .5rem; border-bottom: 1px solid var(--border); text-align: left;
+  white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel);
+  cursor: pointer; }
+th.no-sort { cursor: default; }
+tbody tr:hover { background: var(--grid); }
+tr.dim td { color: var(--muted); }
+tr.clickable { cursor: pointer; }
+tr.on td { box-shadow: inset 3px 0 0 var(--link); }
+.hidecol { display: none; }
+
+details { margin: .4rem 0; }
+summary { cursor: pointer; font-weight: 600; }
+pre.cfg { max-height: 340px; overflow: auto; background: var(--surface); padding: .6rem;
+  border-radius: 8px; border: 1px solid var(--border); }
+
+/* --- figures --------------------------------------------------------------------- */
+.fig { min-height: 320px; margin: .2rem 0 .4rem; }
+.fig.err, .missing { border: 1px dashed var(--border); border-radius: 10px; padding: 1rem;
+  color: var(--muted); font-size: 12.5px; min-height: 0; }
+
+/* --- galleries ------------------------------------------------------------------- */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: .5rem; margin: .3rem 0 .6rem; }
+.grid figure { margin: 0; cursor: zoom-in; }
+.grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
+  background: var(--grid); display: block; border: 3px solid transparent; }
+.grid figure[data-outcome="tp"] img { border-color: var(--good); }
+.grid figure[data-outcome="fp"] img { border-color: var(--critical); }
+.grid figure[data-outcome="fn"] img { border-color: var(--warning); border-style: dashed; }
+.grid figcaption { font-size: 10.5px; color: var(--muted); margin-top: .2rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shown { font-size: 11.5px; color: var(--muted); }
+
+/* --- filter bar ------------------------------------------------------------------ */
+#filterbar { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+  padding: .4rem .5rem .4rem .9rem; display: flex; gap: .6rem; align-items: center;
+  font-size: 12.5px; z-index: 40; box-shadow: 0 4px 18px rgba(0,0,0,.18); }
+#filterbar[hidden] { display: none; }
+#filterclear { border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 999px; padding: .2rem .7rem; cursor: pointer; }
+
+/* --- lightbox -------------------------------------------------------------------- */
+#lb { position: fixed; inset: 0; background: rgba(0,0,0,.82); z-index: 60;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; }
+#lb[hidden] { display: none; }
+#lbstage { position: relative; width: min(512px, 86vw); aspect-ratio: 1; }
+#lbimg { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+#lbovl { position: absolute; inset: 0; pointer-events: none; }
+#lbovl .bx { position: absolute; border-width: 2px; border-style: solid; }
+#lbovl .bx.o-tp { border-color: var(--good); }
+#lbovl .bx.o-fp { border-color: var(--critical); }
+#lbovl .bx.o-fn { border-color: var(--warning); border-style: dashed; }
+#lbovl .lbl { position: absolute; top: -15px; left: -2px; font-size: 10px; padding: 0 3px;
+  white-space: nowrap; color: #fff; background: rgba(0,0,0,.72); border-radius: 3px; }
+#lbcap { color: #eee; font-size: 12px; max-width: 86vw; text-align: center; }
+#lbclose { position: absolute; top: 12px; right: 16px; font-size: 28px; line-height: 1;
+  background: none; border: 0; color: #fff; cursor: pointer; }
+
+ul.caveats { margin: 0; padding-left: 1.1rem; font-size: 12.5px; color: var(--muted); }
+ul.caveats li { margin-bottom: .3rem; }

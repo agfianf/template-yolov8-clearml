@@ -5,6 +5,7 @@ suitable for ClearML logging, including per-class metrics, confusion matrix data
 loss components, learning rates, and speed metrics.
 """
 
+from collections import Counter
 from typing import Any
 
 import numpy as np
@@ -24,6 +25,11 @@ logger = get_logger(__name__)
 # renders as a blank panel rather than an error. 250 points is visually indistinguishable
 # for a monotone-ish curve and keeps the payload flat.
 MAX_CURVE_POINTS = 250
+
+# Hard ceiling on what ValStatsAccumulator will hold. At 20k images x 100 detections
+# that is 2M x ~6 bytes ~= 12 MB, which is flat in dataset size beyond this point --
+# accumulation stops and the report says so rather than the run running out of memory.
+MAX_CAPTURED_DETECTIONS = 2_000_000
 
 
 def _downsample(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -357,6 +363,12 @@ class ValStatsAccumulator:
         self.conf: list[np.ndarray] = []
         self.tp_box: list[np.ndarray] = []
         self.tp_mask: list[np.ndarray] = []
+        self.pred_cls: list[np.ndarray] = []
+        self.tp_level: list[np.ndarray] = []
+        self.tpm_level: list[np.ndarray] = []
+        self.support: Counter[int] = Counter()
+        self.captured = 0
+        self.truncated = False
 
     def reset(self) -> None:
         """Drop everything captured so far, before a new validation pass."""
@@ -364,9 +376,22 @@ class ValStatsAccumulator:
         self.conf.clear()
         self.tp_box.clear()
         self.tp_mask.clear()
+        self.pred_cls.clear()
+        self.tp_level.clear()
+        self.tpm_level.clear()
+        self.support.clear()
+        self.captured = 0
+        self.truncated = False
 
     def update(self, validator: BaseValidator) -> None:
-        """Consume whatever ``update_metrics`` appended since the last call."""
+        """Consume whatever ``update_metrics`` appended since the last call.
+
+        ``im_name`` is deliberately not taken here and cannot be: ``DetMetrics.__init__``
+        fixes the key set of ``self.stats`` and ``update_stats`` drops anything not
+        already in it, so the name reaches ``Metric.update_image_metrics`` and nowhere
+        else. Per-image identity for the HTML report comes from the ``_process_batch``
+        wrapper in ``src/report/capture.py`` instead.
+        """
         stats = getattr(getattr(validator, "metrics", None), "stats", None)
         if not stats or "conf" not in stats:
             return
@@ -379,18 +404,75 @@ class ValStatsAccumulator:
                 self.reset()
             else:
                 return
+        if self.truncated:
+            self._consumed = total
+            return
 
         for i in range(self._consumed, total):
             try:
-                self.conf.append(np.asarray(conf_list[i], dtype=float).ravel())
-                # tp is (n_preds, n_iou); column 0 is the IoU=0.50 decision, which is
-                # what precision/recall and the per-image metrics both use.
-                self.tp_box.append(_first_iou_column(stats["tp"][i]))
-                if "tp_m" in stats:
-                    self.tp_mask.append(_first_iou_column(stats["tp_m"][i]))
+                self._take(stats, i)
             except Exception as e:  # never let a report break validation
                 logger.debug("val stats capture skipped one item: %s", e)
+            if self.truncated:
+                break
         self._consumed = total
+
+    def _take(self, stats: dict, i: int) -> None:
+        """Copy one image's per-detection arrays out of ``metrics.stats``."""
+        conf = np.asarray(stats["conf"][i], dtype=np.float32).ravel()
+        self.conf.append(conf)
+        # tp is (n_preds, n_iou); column 0 is the IoU=0.50 decision, which is what
+        # precision/recall and the per-image metrics both use. The row sum is the same
+        # information quantised over the whole sweep, one byte per detection, which is
+        # what an IoU histogram needs.
+        tp = np.asarray(stats["tp"][i])
+        self.tp_box.append(_first_iou_column(tp))
+        self.tp_level.append(_iou_level(tp))
+        if "tp_m" in stats:
+            tp_m = np.asarray(stats["tp_m"][i])
+            self.tp_mask.append(_first_iou_column(tp_m))
+            self.tpm_level.append(_iou_level(tp_m))
+        if "pred_cls" in stats:
+            self.pred_cls.append(np.asarray(stats["pred_cls"][i], dtype=np.int16).ravel())
+        if "target_cls" in stats:
+            for c in np.asarray(stats["target_cls"][i]).ravel().tolist():
+                self.support[int(c)] += 1
+        self.captured += int(conf.size)
+        # Stop rather than grow: a report that costs a run its GPU memory is not a
+        # report worth having.
+        self.truncated = self.captured >= MAX_CAPTURED_DETECTIONS
+
+    def per_class_confidence_split(
+        self,
+        class_index: int,
+        prefer_mask: bool = True,
+    ) -> dict[str, np.ndarray] | None:
+        """Split one class's detections into matched and unmatched confidences.
+
+        Needs ``pred_cls``, which the accumulator only started keeping for the HTML
+        report; returns None when it is absent rather than silently answering for every
+        class at once.
+        """
+        if not self.conf or len(self.pred_cls) != len(self.conf):
+            return None
+        tp_source = self.tp_mask if (prefer_mask and self.tp_mask) else self.tp_box
+        if not tp_source or len(tp_source) != len(self.conf):
+            return None
+
+        conf = np.concatenate(self.conf)
+        matched = np.concatenate(tp_source).astype(bool)
+        cls = np.concatenate(self.pred_cls)
+        if conf.size != matched.size or conf.size != cls.size:
+            return None
+        sel = cls == int(class_index)
+        if not sel.any():
+            return None
+        conf, matched = conf[sel], matched[sel]
+        return {
+            "tp": conf[matched],
+            "fp": conf[~matched],
+            "basis": "mask" if tp_source is self.tp_mask else "box",
+        }
 
     def confidence_split(self, prefer_mask: bool = True) -> dict[str, np.ndarray] | None:
         """Return ``{"tp": conf_of_matched, "fp": conf_of_unmatched, "basis": ...}``."""
@@ -424,9 +506,22 @@ def _first_iou_column(tp: Any) -> np.ndarray:
     return arr[:, 0]
 
 
+def _iou_level(tp: Any) -> np.ndarray:
+    """Count how many of the ten IoU thresholds a detection matched, as uint8.
+
+    One byte per detection carries the whole sweep at 0.05 resolution, which is all an
+    IoU histogram needs and 1/80th of the memory the raw boolean matrix costs.
+    """
+    arr = np.asarray(tp)
+    if arr.ndim <= 1:
+        return arr.astype(np.uint8).ravel()
+    return arr.sum(axis=1).astype(np.uint8)
+
+
 def extract_calibration_bins(
     split: dict[str, np.ndarray],
     n_bins: int = 10,
+    class_name: str | None = None,
 ) -> dict[str, Any] | None:
     """Bin detections by confidence and measure observed precision against it.
 
@@ -441,8 +536,12 @@ def extract_calibration_bins(
     next to recall.
 
     Args:
-        split: Output of ``ValStatsAccumulator.confidence_split``.
+        split: Output of ``ValStatsAccumulator.confidence_split`` or of
+            ``per_class_confidence_split``.
         n_bins: Number of equal-width confidence bins.
+        class_name: Recorded on the result when the split was already filtered to one
+            class, so a per-class diagram cannot be mistaken for the global one. It does
+            not filter -- ``per_class_confidence_split`` does that.
 
     Returns:
         Dict with bin centres, precision, mean confidence, counts and ``ece``, or None.
@@ -491,6 +590,7 @@ def extract_calibration_bins(
         "count": counts,
         "ece": float(ece),
         "basis": split.get("basis", "box"),
+        "class_name": class_name,
     }
 
 
