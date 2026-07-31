@@ -1,146 +1,703 @@
-/* Report stylesheet. The theme custom properties are generated from src/report/theme.py
-   and prepended to this file at build time, so nothing here hard-codes a palette value
-   except the two places a colour must never follow the theme: the status outcomes on
-   gallery overlays, which are read as meaning rather than decoration.
+/* Report stylesheet. This file owns the whole palette: the figures are hand-authored
+   SVG that name these custom properties rather than any hex, so the theme toggle is what
+   recolours the charts and there is no second copy of the palette anywhere.
 
-   Two rules are load-bearing rather than cosmetic:
+   Four rules are load-bearing rather than cosmetic:
    - every <section> carries `content-visibility:auto` *and* `contain-intrinsic-size`.
      Without the second the scrollbar jumps as sections render.
-   - a Plotly div is never inside `display:none` or a closed <details>: Plotly renders
-     zero-width there and stays that way. The training appendix observes its figures
-     from its own `toggle` handler instead. */
+   - `svg.chart text{pointer-events:none}`. The printed direct labels sit on top of the
+     mark that carries the data-tip, and the tooltip resolves its target with
+     closest('[data-tip]'); without this, hovering the middle of a matrix cell -- where
+     its own count is drawn -- finds no tooltip at all.
+   - exactly three blurred surfaces (nav, KPI strip, lightbox scrim) plus the transient
+     thumbnail caption, and every one of them names an opaque fallback below.
+   - the confusion matrix ships one set of cells carrying both ramps (`hm-N nm-N`); only
+     the `[data-cm]` rules may give `.nm-*` a fill, or the normalised ramp would win in
+     both modes and paint every cell the same.
 
-*, *::before, *::after { box-sizing: border-box; }
-html { scroll-padding-top: 72px; }
-body {
-  margin: 0;
-  background: var(--surface);
-  color: var(--text);
-  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  -webkit-text-size-adjust: 100%;
+   Corners are square. Every panel, tile, button and control here is a rectangle: the
+   rounding was applied at five different radii, which read as five different materials
+   on one page. The three exceptions are shapes whose meaning *is* the round: the KPI
+   progress rings, the severity dots, and the annotations switch, which has to look like
+   a switch.
+
+   Six accents cycle down the page, set by `section[data-accent]` and consumed only by
+   the heading tile and the "how to read it" rule. No accent ever colours type or data --
+   the charts stay on the one cyan-to-lime brand ramp, so a colour in a figure always
+   means a value and never a section. */
+
+:root{
+  color-scheme: light dark;
+  --brand-cyan:#02B1F0; --brand-teal:#74D5C2; --brand-lime:#A3E85A;
+  --brand-grad:linear-gradient(100deg,#02B1F0 0%,#74D5C2 52%,#A3E85A 100%);
+  --brand-cyan-ink:#017BA8; --brand-teal-ink:#457F74; --brand-lime-ink:#618B36;
+  --ink:#1B1D1E; --paper:#FFFFFF;
+  --ink-1:color-mix(in srgb,var(--ink) 78%,var(--paper));
+  --ink-2:color-mix(in srgb,var(--ink) 58%,var(--paper));
+  --ink-3:color-mix(in srgb,var(--ink) 42%,var(--paper));
+  --rule:color-mix(in srgb,var(--ink) 12%,var(--paper));
+  --rule-2:color-mix(in srgb,var(--ink) 7%,var(--paper));
+  --grid:color-mix(in srgb,var(--ink) 14%,var(--paper));
+  --band:color-mix(in srgb,var(--ink) 5%,var(--paper));
+  --hover:color-mix(in srgb,var(--ink) 3%,var(--paper));
+  --peer:color-mix(in srgb,var(--ink) 42%,var(--paper));
+  --good:#0ca30c; --warn:#b57614; --serious:#AD2111;
+  /* six section accents: the three brand hues plus three that sit beside them */
+  --acc-0:#02B1F0; --acc-1:#74D5C2; --acc-2:#A3E85A;
+  --acc-3:#8B7DD8; --acc-4:#E8A93B; --acc-5:#E88AA0;
+  --col:720px; --col-full:1060px; --nav-h:52px; --rail:150px;
+  --font-sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI Variable Text","Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sheet:color-mix(in srgb,var(--paper) 93%,transparent);
+  --glass-fill:color-mix(in srgb,var(--paper) 72%,transparent);
+  --glass-border:color-mix(in srgb,var(--ink) 10%,transparent);
+  --glass-hi:rgba(255,255,255,.55);
+  --glass-sat:150%;
+  --amb-1:14%; --amb-2:12%; --amb-3:11%;
 }
-h1, h2, h3 { line-height: 1.25; margin: 0 0 .4rem; font-weight: 640; }
-h1 { font-size: 1.5rem; }
-h2 { font-size: 1.15rem; }
-h3 { font-size: .95rem; }
-p { margin: 0 0 .6rem; }
-a { color: var(--link); }
-code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.num, td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
-
-.banner {
-  display: block; padding: .5rem 1rem; text-align: center; font-weight: 600;
-  background: var(--panel); color: var(--link); border-bottom: 1px solid var(--border);
-  text-decoration: none;
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#F2F4F5; --paper:#0E1113;
+    --brand-cyan-ink:var(--brand-cyan); --brand-teal-ink:var(--brand-teal);
+    --brand-lime-ink:var(--brand-lime);
+    --good:#7CCB7C; --warn:#E0A63B; --serious:#E66767;
+    --glass-fill:color-mix(in srgb,var(--paper) 66%,transparent);
+    --glass-border:rgba(255,255,255,.10);
+    --glass-hi:rgba(255,255,255,.09);
+    --glass-sat:165%;
+    --amb-1:20%; --amb-2:17%; --amb-3:15%;
+  }
 }
-.brandbar { height: 4px; background: var(--brand-gradient); }
+:root[data-theme="dark"]{
+  --ink:#F2F4F5; --paper:#0E1113;
+  --brand-cyan-ink:var(--brand-cyan); --brand-teal-ink:var(--brand-teal);
+  --brand-lime-ink:var(--brand-lime);
+  --good:#7CCB7C; --warn:#E0A63B; --serious:#E66767;
+  --glass-fill:color-mix(in srgb,var(--paper) 66%,transparent);
+  --glass-border:rgba(255,255,255,.10);
+  --glass-hi:rgba(255,255,255,.09);
+  --glass-sat:165%;
+  --amb-1:20%; --amb-2:17%; --amb-3:15%;
+}
 
-.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 1.4rem;
-  max-width: 1500px; margin: 0 auto; padding: 1rem; }
-@media (max-width: 860px) { .shell { grid-template-columns: minmax(0, 1fr); } }
+*,*::before,*::after{box-sizing:border-box}
+/* One scrollbar treatment for the page and every scroller inside it: a thin track-less
+   bar that only shows its thumb. Firefox takes the two properties, everything else takes
+   the pseudo-elements, and the gallery keeps its own `scrollbar-width:none`. */
+*{scrollbar-width:thin;scrollbar-color:var(--rule) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:var(--rule);border:3px solid transparent;background-clip:content-box;
+}
+::-webkit-scrollbar-thumb:hover{background:var(--ink-3);background-clip:content-box}
+html{scroll-behavior:smooth;scroll-padding-top:calc(var(--nav-h) + 20px)}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--font-sans);font-size:15px;line-height:1.6;
+  font-variant-numeric:tabular-nums;
+  -webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(58% 46% at 10% -4%, color-mix(in srgb,var(--brand-cyan) var(--amb-1),transparent) 0%, transparent 62%),
+    radial-gradient(52% 42% at 92% 8%, color-mix(in srgb,var(--brand-teal) var(--amb-2),transparent) 0%, transparent 60%),
+    radial-gradient(64% 48% at 68% 96%, color-mix(in srgb,var(--brand-lime) var(--amb-3),transparent) 0%, transparent 64%);
+}
 
-nav { position: sticky; top: 8px; align-self: start; display: flex; flex-direction: column;
-  gap: 2px; font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto; }
-nav a { padding: .28rem .5rem; border-radius: 6px; color: var(--muted); text-decoration: none;
-  border-left: 3px solid transparent; }
-nav a:hover { background: var(--panel); color: var(--text); }
-nav a.active { color: var(--text); border-left-color: var(--link); background: var(--panel); }
-nav button { margin-top: .6rem; padding: .35rem .5rem; border-radius: 6px; cursor: pointer;
-  background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+/* ---------- glass: nav, KPI strip, lightbox scrim, and nothing else ---- */
+.glass{
+  background:var(--glass-fill);
+  -webkit-backdrop-filter:blur(14px) saturate(var(--glass-sat));
+  backdrop-filter:blur(14px) saturate(var(--glass-sat));
+  border:1px solid var(--glass-border);
+  box-shadow:inset 0 1px 0 var(--glass-hi),0 1px 2px rgba(16,24,32,.05),
+             0 8px 24px -12px rgba(16,24,32,.14);
+}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .glass,.lb,.thumb .cap{background:var(--paper)}
+}
+@media (prefers-reduced-transparency:reduce){
+  .glass,.lb,.thumb .cap{
+    background:var(--paper);backdrop-filter:none;-webkit-backdrop-filter:none;
+  }
+  body::before{display:none}
+}
+@media (forced-colors:active){
+  .glass{background:Canvas;border:1px solid CanvasText;backdrop-filter:none}
+  .lb,.thumb .cap{background:Canvas;backdrop-filter:none;-webkit-backdrop-filter:none}
+  body::before{display:none}
+}
 
-main { min-width: 0; }
-section {
+/* ---------------------------- iframe escape hatch ---------------------- */
+/* href="" resolves to this document's own URL, which inside the ClearML DEBUG SAMPLES
+   iframe is the artifact URL -- so it works with scripts blocked entirely. */
+.banner{
+  display:block;padding:7px 16px;text-align:center;font-size:12px;font-weight:500;
+  color:var(--ink-2);text-decoration:none;background:var(--band);
+  border-bottom:1px solid var(--rule-2);
+}
+.banner:hover{color:var(--ink)}
+
+/* ---------------------------- nav -------------------------------------- */
+.nav{
+  position:sticky;top:0;z-index:40;height:var(--nav-h);
+  border-left:0;border-right:0;border-top:0;
+  border-bottom:1px solid var(--rule);
+  box-shadow:inset 0 1px 0 var(--glass-hi),0 1px 2px rgba(16,24,32,.04);
+}
+.nav::after{
+  content:"";position:absolute;left:0;right:0;bottom:-2px;height:2px;
+  background:var(--brand-grad);
+}
+.nav-in{
+  max-width:var(--col-full);margin:0 auto;padding:0 20px;height:100%;
+  display:flex;align-items:center;gap:14px;
+}
+.brandmark{display:flex;align-items:center;gap:9px;min-width:0;flex:0 1 auto}
+.brandmark .dot{width:16px;height:16px;background:var(--brand-grad);flex:none}
+.nav-spacer{margin-left:auto}
+.brand-txt{min-width:0;line-height:1.15}
+.eyebrow{
+  font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);display:block;
+}
+.brand-run{
+  font-size:12.5px;font-weight:500;color:var(--ink-1);display:block;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tgl{
+  font:500 12.5px/1 var(--font-sans);color:var(--ink-2);cursor:pointer;
+  background:transparent;border:1px solid var(--rule);
+  padding:6px 10px;flex:none;
+}
+.tgl:hover{color:var(--ink);background:var(--hover)}
+.tgl[aria-expanded="true"]{color:var(--ink);background:var(--hover)}
+/* The header row used to repeat the contents as a second list of links. It now opens
+   the one list, and only where that list is not already on screen. */
+.toc-btn{display:none}
+
+/* ---------------------------- contents list ---------------------------- */
+/* One list, two presentations. Wide: a transparent rail beside the sheet -- no
+   background, no border, no blur, no box. Narrow: the same markup as a panel the header
+   button opens, because a thirteen-section report with no contents at all was the state
+   this used to fall back to below 1400px. */
+.toc{
+  display:none;position:fixed;z-index:30;
+  top:50%;transform:translateY(-50%);
+  left:max(12px,calc(50% - var(--col-full)/2 - var(--rail) - 16px));
+  width:var(--rail);
+}
+.toc a{
+  display:flex;align-items:center;gap:8px;position:relative;padding-left:12px;
+  font-size:12px;line-height:2;color:var(--ink-3);text-decoration:none;
+}
+.toc a:hover{color:var(--ink-2)}
+.toc a.on{color:var(--ink);font-weight:500}
+.toc a.on::before{
+  content:"";position:absolute;left:0;top:.5em;width:2px;height:1em;
+  background:var(--brand-grad);
+}
+.toc a:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:2px}
+/* The icon repeats the one on the section heading, at 13px and in the ink colour: it is
+   what makes a glance at the rail and a glance at the page agree. */
+.toc-i{display:inline-flex;flex:none;opacity:.62}
+.toc-i .ico{width:15px;height:15px;background:none;color:inherit}
+.toc-i svg{width:13px;height:13px}
+.toc a.on .toc-i{opacity:1}
+
+@media (min-width:1400px){.toc{display:block}}
+/* Between the two: the rail pins to the left edge and the sheet is pushed clear of it,
+   rather than the rail being switched off because the two would have overlapped. */
+@media (min-width:1180px) and (max-width:1399.98px){
+  .toc{display:block;left:14px;--rail:138px;width:var(--rail)}
+  .wrap{padding-left:calc(var(--rail) + 34px)}
+}
+@media (max-width:1179.98px){
+  .toc-btn{display:block}
+  .toc{
+    top:var(--toc-top,var(--nav-h));left:auto;right:14px;transform:none;
+    width:212px;max-height:min(70vh,560px);overflow-y:auto;
+    background:var(--paper);border:1px solid var(--rule);padding:10px 12px;z-index:60;
+    box-shadow:0 14px 34px -18px rgba(16,24,32,.5);
+  }
+  .toc.open{display:block}
+  .toc a{line-height:2.1}
+}
+
+/* ---------------------------- shell ------------------------------------ */
+.wrap{max-width:var(--col-full);margin:0 auto;padding:0 20px}
+.sheet{
+  display:block;background:var(--sheet);
+  padding:34px 44px 56px;margin:26px 0 30px;
+}
+/* Scroll room past the last section, so the contents list can actually put it under the
+   header. Without it the final two entries highlighted but never arrived. */
+.tail{height:min(42vh,360px)}
+@media (max-width:640px){
+  .sheet{padding:24px 18px 40px}
+  .wrap{padding:0 12px}
+}
+/* one reading column, 720 centred; only .wide breaks out */
+.sheet > *,.sheet section > *{max-width:var(--col);margin-left:auto;margin-right:auto}
+.sheet > section,.sheet > .wide,.sheet section > .wide{max-width:none}
+
+/* ---------------------------- type ------------------------------------- */
+h1{font-size:26px;font-weight:600;letter-spacing:-.011em;line-height:1.2;margin:0 0 8px}
+h2{
+  font-size:19px;font-weight:600;letter-spacing:-.005em;margin:52px 0 12px;
+  line-height:1.3;display:flex;align-items:center;gap:11px;
+}
+h3{font-size:15px;font-weight:500;margin:26px 0 8px;color:var(--ink-1)}
+p{margin:0 0 16px}
+a{color:var(--brand-cyan-ink)}
+.sub{font-size:13.5px;color:var(--ink-2);margin:0 0 16px;max-width:var(--col)}
+
+/* ---------------------------- section accents -------------------------- */
+section{--acc:var(--acc-0)}
+section[data-accent="1"]{--acc:var(--acc-1)}
+section[data-accent="2"]{--acc:var(--acc-2)}
+section[data-accent="3"]{--acc:var(--acc-3)}
+section[data-accent="4"]{--acc:var(--acc-4)}
+section[data-accent="5"]{--acc:var(--acc-5)}
+/* Pastel against paper in either theme, because --paper is what flips. */
+.ico{
+  width:30px;height:30px;flex:none;display:inline-flex;
+  align-items:center;justify-content:center;
+  background:color-mix(in srgb,var(--acc) 18%,var(--paper));
+  color:color-mix(in srgb,var(--acc) 62%,var(--ink));
+}
+.ico svg{
+  fill:none;stroke:currentColor;stroke-width:1.4;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+/* What to do with the section, kept visually apart from what it is. */
+.read{
+  font-size:13.5px;line-height:1.65;color:var(--ink-1);margin:0 0 20px;
+  padding:13px 17px;max-width:var(--col);
+  background:color-mix(in srgb,var(--acc) 9%,var(--paper));
+  border-left:2px solid color-mix(in srgb,var(--acc) 62%,var(--ink));
+}
+.read b{font-weight:600;color:var(--ink)}
+.read em{font-style:italic}
+
+/* ---------------------------- glossary --------------------------------- */
+.gloss{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(288px,1fr));
+  gap:0 34px;margin:22px 0 6px;padding:0;
+}
+.gloss > div{
+  display:flex;gap:12px;align-items:baseline;
+  padding:9px 0;border-bottom:1px solid var(--rule-2);
+}
+.gloss dt{
+  flex:0 0 46px;font-family:var(--font-mono);font-size:12px;font-weight:600;
+  color:var(--ink);
+}
+.gloss dd{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.gloss dd em{font-style:italic;color:var(--ink-1)}
+.meta{font-size:12.5px;color:var(--ink-3);line-height:1.7;margin:0}
+.meta b{font-weight:500;color:var(--ink-2)}
+/* experiment tags: identifiers, not a taxonomy -- no border, no per-tag colour */
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px;padding:0;list-style:none}
+.tags li{
+  font-size:11px;line-height:1.5;color:var(--ink-2);background:var(--band);
+  padding:2px 7px;white-space:nowrap;
+}
+.note{font-size:12.5px;color:var(--ink-3);margin:0 0 16px}
+code,pre,.mono{font-family:var(--font-mono);font-size:.9em;color:var(--ink-1)}
+section{
   content-visibility: auto;            /* mandatory pair -- see the header comment */
   contain-intrinsic-size: auto 900px;
-  margin: 0 0 1.6rem; padding: 1rem 1.1rem; background: var(--panel);
-  border: 1px solid var(--border); border-radius: 12px;
+  scroll-margin-top:calc(var(--nav-h) + 20px);
 }
-section > .sub { color: var(--muted); font-size: 12.5px; margin-bottom: .8rem; }
-.caption { color: var(--muted); font-size: 12px; margin: .35rem 0 1rem; }
-.scrollx { overflow-x: auto; max-width: 100%; }
+section + section{margin-top:24px}
 
-/* --- header ---------------------------------------------------------------------- */
-.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: .5rem 1.2rem; margin: .8rem 0 1rem; font-size: 12.5px; }
-.meta div span { color: var(--muted); display: block; font-size: 11px; }
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: .6rem; }
-.kpi { border: 1px solid var(--border); border-top: 3px solid var(--link);
-  border-radius: 10px; padding: .6rem .7rem; }
-.kpi .lab { font-size: 11.5px; color: var(--muted); }
-.kpi .val { font-size: 1.5rem; font-variant-numeric: tabular-nums; font-weight: 650; }
-.kpi .basis { font-size: 11px; color: var(--muted); margin-top: .2rem; }
-.kpi .meter { height: 4px; border-radius: 2px; background: var(--grid); margin-top: .35rem; }
-.kpi .meter > i { display: block; height: 100%; border-radius: 2px; background: var(--link); }
+/* ---------------------------- kpi strip (glass #2) --------------------- */
+.kpis{padding:18px 20px;margin:22px 0 0;display:flex;flex-wrap:wrap}
+.kpi{flex:1 1 0;padding:2px 10px;border-left:1px solid var(--rule);min-width:0}
+.kpi:first-child{border-left:0;padding-left:0}
+.kpi:last-child{padding-right:0}
+.kpi-v{font-size:27px;font-weight:600;letter-spacing:-.02em;line-height:1.05;display:block}
+.kpi-l{
+  font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-2);display:block;margin-top:6px;
+}
+.kpi-b{font-size:11px;color:var(--ink-3);display:block;margin-top:2px;line-height:1.35}
+.ring{width:30px;height:30px;flex:none;display:block;margin-bottom:5px}
+.rk{fill:none;stroke:var(--band);stroke-width:3}
+.ra{fill:none;stroke:var(--brand-cyan-ink);stroke-width:3;stroke-linecap:round}
+@media (max-width:900px){
+  .kpi{flex:1 1 28%;padding-top:6px;padding-bottom:6px}
+  .kpi:nth-child(3n+1){border-left:0;padding-left:0}
+}
 
-/* --- banners --------------------------------------------------------------------- */
-.warn { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .7rem;
-  border-radius: 8px; margin-bottom: .4rem; font-size: 12.5px; border: 1px solid var(--border); }
-.warn b { text-transform: uppercase; font-size: 10.5px; letter-spacing: .04em; }
-.warn.warning { border-left: 4px solid var(--warning); }
-.warn.serious { border-left: 4px solid var(--serious); }
-.warn.critical { border-left: 4px solid var(--critical); }
+/* ---------------------------- highlights ------------------------------- */
+/* the same flat register as .flags, one notch quieter: no dot, no colour. */
+.hl{margin:14px 0 0;padding:0;list-style:none}
+.hl li{
+  font-size:13.5px;line-height:1.55;padding:8px 0;color:var(--ink-1);
+  border-top:1px solid var(--rule-2);font-variant-numeric:tabular-nums;
+}
+.hl li:first-child{border-top:0}
+.hl b{font-weight:500;color:var(--ink)}
 
-/* --- tables ---------------------------------------------------------------------- */
-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-th, td { padding: .32rem .5rem; border-bottom: 1px solid var(--border); text-align: left;
-  white-space: nowrap; }
-th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel);
-  cursor: pointer; }
-th.no-sort { cursor: default; }
-tbody tr:hover { background: var(--grid); }
-tr.dim td { color: var(--muted); }
-tr.clickable { cursor: pointer; }
-tr.on td { box-shadow: inset 3px 0 0 var(--link); }
-.hidecol { display: none; }
+/* ---------------------------- warnings --------------------------------- */
+.flags{margin:14px 0 0;padding:0;list-style:none}
+.flags li{
+  display:flex;gap:9px;align-items:baseline;font-size:13px;line-height:1.5;
+  padding:8px 0;border-top:1px solid var(--rule-2);color:var(--ink-1);
+}
+.flags li:first-child{border-top:0}
+.sd{width:7px;height:7px;border-radius:50%;flex:none;position:relative;top:-1px}
+.sd.critical,.sd.serious{background:var(--serious)}
+.sd.warning{background:var(--warn)}
+.sd.good{background:var(--good)}
 
-details { margin: .4rem 0; }
-summary { cursor: pointer; font-weight: 600; }
-pre.cfg { max-height: 340px; overflow: auto; background: var(--surface); padding: .6rem;
-  border-radius: 8px; border: 1px solid var(--border); }
+/* ---------------------------- figures ---------------------------------- */
+figure{margin:20px 0 0}
+.fig-t{font-size:13px;font-weight:500;color:var(--ink-2);margin:0 0 8px;text-align:left}
+figcaption,.caption{
+  font-size:12.5px;color:var(--ink-3);margin-top:12px;text-align:left;
+  line-height:1.5;max-width:var(--col);
+}
+figcaption b,.caption b{font-weight:500;color:var(--ink-2)}
+svg.chart{width:100%;height:auto;display:block;overflow:visible}
+svg.chart text{pointer-events:none}   /* mandatory -- see the header comment */
+.missing{
+  font-size:12.5px;color:var(--ink-3);margin:16px 0;padding:10px 0 10px 12px;
+  border-left:2px solid var(--rule);
+}
 
-/* --- figures --------------------------------------------------------------------- */
-.fig { min-height: 320px; margin: .2rem 0 .4rem; }
-.fig.err, .missing { border: 1px dashed var(--border); border-radius: 10px; padding: 1rem;
-  color: var(--muted); font-size: 12.5px; min-height: 0; }
+/* chart primitives (zero hex inside any svg) */
+.gl{stroke:var(--grid);stroke-width:1;vector-effect:non-scaling-stroke;fill:none}
+.gl-2{stroke:var(--rule-2);stroke-width:1;vector-effect:non-scaling-stroke;fill:none}
+.tk{font-size:11px;fill:var(--ink-3)}
+.axl{font-size:11px;fill:var(--ink-3)}
+.dl{
+  font-size:11px;font-weight:500;
+  paint-order:stroke;stroke:var(--paper);stroke-width:3.5px;stroke-linejoin:round;
+}
+.dl-q{
+  font-size:11px;font-weight:400;fill:var(--ink-3);
+  paint-order:stroke;stroke:var(--paper);stroke-width:3.5px;stroke-linejoin:round;
+}
+.ln{
+  fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;
+  vector-effect:non-scaling-stroke;
+}
+.mk{stroke:var(--paper);stroke-width:1.5}
+.ref{
+  stroke:var(--peer);stroke-width:1.5;stroke-dasharray:5 5;fill:none;
+  vector-effect:non-scaling-stroke;
+}
+.lead{stroke:var(--rule);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
+.f-cyan{fill:var(--brand-cyan-ink)} .s-cyan{stroke:var(--brand-cyan-ink)}
+.f-teal{fill:var(--brand-teal-ink)} .s-teal{stroke:var(--brand-teal-ink)}
+.f-peer{fill:var(--peer)} .s-peer{stroke:var(--peer)}
+.f-ink1{fill:var(--ink-1)} .f-ink2{fill:var(--ink-2)} .f-paper{fill:var(--paper)}
+.f-g1{fill:color-mix(in srgb,var(--ink) 30%,var(--paper))}
+.f-g2{fill:color-mix(in srgb,var(--ink) 20%,var(--paper))}
+.f-g3{fill:color-mix(in srgb,var(--ink) 13%,var(--paper))}
+.s-g1{stroke:color-mix(in srgb,var(--ink) 30%,var(--paper))}
+/* status, and only ever for an outcome: matched against unmatched detections */
+.f-good{fill:var(--good)} .f-serious{fill:var(--serious)}
+.seg-t{font-size:11px;font-weight:500}
+.b-lbl{font-size:11px;font-weight:500;fill:var(--ink-1)}
+.hit{fill:none;pointer-events:all}
 
-/* --- galleries ------------------------------------------------------------------- */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: .5rem; margin: .3rem 0 .6rem; }
-.grid figure { margin: 0; cursor: zoom-in; }
-.grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
-  background: var(--grid); display: block; border: 3px solid transparent; }
-.grid figure[data-outcome="tp"] img { border-color: var(--good); }
-.grid figure[data-outcome="fp"] img { border-color: var(--critical); }
-.grid figure[data-outcome="fn"] img { border-color: var(--warning); border-style: dashed; }
-.grid figcaption { font-size: 10.5px; color: var(--muted); margin-top: .2rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shown { font-size: 11.5px; color: var(--muted); }
+/* sequential ramp for density: --band -> --brand-cyan-ink, one hue */
+.hm-0{fill:var(--band)}
+.hm-1{fill:color-mix(in srgb,var(--brand-cyan-ink) 16%,var(--band))}
+.hm-2{fill:color-mix(in srgb,var(--brand-cyan-ink) 31%,var(--band))}
+.hm-3{fill:color-mix(in srgb,var(--brand-cyan-ink) 47%,var(--band))}
+.hm-4{fill:color-mix(in srgb,var(--brand-cyan-ink) 64%,var(--band))}
+.hm-5{fill:color-mix(in srgb,var(--brand-cyan-ink) 82%,var(--band))}
+.hm-6{fill:var(--brand-cyan-ink)}
+.hm-lbl{font-size:11px;font-weight:500;fill:var(--paper)}
+.hm-lbl-d{font-size:11px;font-weight:500;fill:var(--ink)}
+/* a matrix with few enough classes to give each cell 44px or more */
+.cm-big{font-size:15px}
+.mx-lbl{font-size:10.5px;fill:var(--ink-2)}
 
-/* --- filter bar ------------------------------------------------------------------ */
-#filterbar { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
-  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
-  padding: .4rem .5rem .4rem .9rem; display: flex; gap: .6rem; align-items: center;
-  font-size: 12.5px; z-index: 40; box-shadow: 0 4px 18px rgba(0,0,0,.18); }
-#filterbar[hidden] { display: none; }
-#filterclear { border: 1px solid var(--border); background: var(--surface); color: var(--text);
-  border-radius: 999px; padding: .2rem .7rem; cursor: pointer; }
+/* confusion matrix: one set of cells, two ramps, the wrapper picks which is live.
+   `.nm-*` must never carry a fill outside these rules -- see the header comment. */
+.cm-n{display:none}
+[data-cm="norm"] .cm-c{display:none}
+[data-cm="norm"] .cm-n{display:inline}
+[data-cm="norm"] .nm-0{fill:var(--band)}
+[data-cm="norm"] .nm-1{fill:color-mix(in srgb,var(--brand-cyan-ink) 16%,var(--band))}
+[data-cm="norm"] .nm-2{fill:color-mix(in srgb,var(--brand-cyan-ink) 31%,var(--band))}
+[data-cm="norm"] .nm-3{fill:color-mix(in srgb,var(--brand-cyan-ink) 47%,var(--band))}
+[data-cm="norm"] .nm-4{fill:color-mix(in srgb,var(--brand-cyan-ink) 64%,var(--band))}
+[data-cm="norm"] .nm-5{fill:color-mix(in srgb,var(--brand-cyan-ink) 82%,var(--band))}
+[data-cm="norm"] .nm-6{fill:var(--brand-cyan-ink)}
+#cm-toggle{
+  font:500 12px/1 var(--font-sans);color:var(--ink-2);cursor:pointer;
+  background:transparent;border:1px solid var(--rule);
+  padding:6px 10px;margin:16px 0 0;
+}
+#cm-toggle:hover{color:var(--ink);background:var(--hover)}
 
-/* --- lightbox -------------------------------------------------------------------- */
-#lb { position: fixed; inset: 0; background: rgba(0,0,0,.82); z-index: 60;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; }
-#lb[hidden] { display: none; }
-#lbstage { position: relative; width: min(512px, 86vw); aspect-ratio: 1; }
-#lbimg { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
-#lbovl { position: absolute; inset: 0; pointer-events: none; }
-#lbovl .bx { position: absolute; border-width: 2px; border-style: solid; }
-#lbovl .bx.o-tp { border-color: var(--good); }
-#lbovl .bx.o-fp { border-color: var(--critical); }
-#lbovl .bx.o-fn { border-color: var(--warning); border-style: dashed; }
-#lbovl .lbl { position: absolute; top: -15px; left: -2px; font-size: 10px; padding: 0 3px;
-  white-space: nowrap; color: #fff; background: rgba(0,0,0,.72); border-radius: 3px; }
-#lbcap { color: #eee; font-size: 12px; max-width: 86vw; text-align: center; }
-#lbclose { position: absolute; top: 12px; right: 16px; font-size: 28px; line-height: 1;
-  background: none; border: 0; color: #fff; cursor: pointer; }
+/* ---------------------------- tables ----------------------------------- */
+.scrollx{overflow-x:auto;max-width:100%;margin:20px 0 0}
+table{
+  border-collapse:collapse;border:0;width:100%;font-size:13px;
+  font-variant-numeric:tabular-nums;
+}
+thead th{
+  font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-2);text-align:right;padding:0 10px 7px 0;border:0;
+  white-space:nowrap;position:relative;cursor:pointer;
+}
+thead th:first-child{text-align:left;padding-left:0}
+thead th.no-sort{cursor:default}
+thead th::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--rule);
+}
+tbody td{
+  padding:6px 10px 6px 0;text-align:right;border:0;position:relative;white-space:nowrap;
+}
+tbody td:first-child{text-align:left;padding-left:0;font-weight:500}
+tbody td::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--rule-2);
+}
+tbody tr:hover td{background:var(--hover)}
+tbody tr.dim td{color:var(--ink-3);font-weight:400}
+tbody tr.dim td:first-child{font-weight:500}
+tr.clickable{cursor:pointer}
+tr.on td{box-shadow:inset 0 -2px 0 var(--brand-cyan-ink)}
+.hidecol{display:none}
+details{margin:20px 0 0}
+summary{cursor:pointer;font-size:13px;font-weight:500;color:var(--ink-1)}
+pre.cfg{
+  max-height:340px;overflow:auto;background:var(--band);padding:12px;
+  font-size:12px;line-height:1.5;
+}
 
-ul.caveats { margin: 0; padding-left: 1.1rem; font-size: 12.5px; color: var(--muted); }
-ul.caveats li { margin-bottom: .3rem; }
+/* ---------------------------- stat rows -------------------------------- */
+.statrow{display:flex;flex-wrap:wrap;margin:20px 0 0}
+.statcol{flex:1 1 0;min-width:180px;padding:0 20px;border-left:1px solid var(--rule)}
+.statcol:first-child{border-left:0;padding-left:0}
+.statcol:last-child{padding-right:0}
+.stat-h{
+  font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 8px;
+}
+.stat-l{
+  display:flex;justify-content:space-between;gap:16px;font-size:13px;
+  color:var(--ink-1);margin:0 0 5px;font-variant-numeric:tabular-nums;
+}
+.stat-l b{font-weight:500;color:var(--ink)}
+.stat-l.zero,.stat-l.zero b{color:var(--ink-3);font-weight:400}
+@media (max-width:640px){
+  .statcol{flex:1 1 100%;border-left:0;padding:0;margin-top:14px}
+  .statcol:first-child{margin-top:0}
+}
+/* environment variant: label rail on the left, value flows -- still no box */
+.statrow.env .statcol{flex:1.3 1 320px;min-width:300px;padding:0 16px}
+.statrow.env .statcol:nth-child(2){flex:1.05 1 290px;min-width:270px}
+.statrow.env .statcol.chart-col{flex:.95 1 260px;min-width:250px}
+.statrow.env .statcol:first-child{padding-left:0}
+.statrow.env .statcol:last-child{padding-right:0}
+.statrow.env .stat-l{justify-content:flex-start;gap:10px;align-items:baseline}
+.statrow.env .stat-l > span{flex:0 0 108px;color:var(--ink-2)}
+.statrow.env .stat-l b{font-weight:500;min-width:0;white-space:normal}
+@media (max-width:1080px){
+  .statrow.env .statcol.chart-col{
+    flex:1 1 100%;border-left:0;padding-left:0;margin-top:18px;
+  }
+}
+
+/* ---------------------------- gallery ---------------------------------- */
+.galwrap{margin:26px 0 0}
+.gal-head{
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  font-size:12.5px;margin:0 0 10px;
+}
+.tabs{display:flex;align-items:center;gap:18px}
+.tab{
+  position:relative;background:none;border:0;padding:0 0 6px;margin:0;cursor:pointer;
+  font:400 12.5px/1.4 var(--font-sans);color:var(--ink-3);
+}
+.tab:hover{color:var(--ink-2)}
+.tab[aria-selected="true"]{color:var(--ink);font-weight:500}
+.tab[aria-selected="true"]::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+  background:var(--brand-grad);
+}
+.tab:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:3px}
+.gal-meta{margin-left:auto;color:var(--ink-3);white-space:nowrap}
+.anno{
+  display:inline-flex;align-items:center;gap:9px;background:none;border:0;padding:0;
+  margin:0;cursor:pointer;font:400 12px/1 var(--font-sans);color:var(--ink-2);
+}
+.anno .trk{
+  position:relative;width:30px;height:16px;border-radius:8px;flex:none;
+  background:var(--rule);transition:background 120ms ease;
+}
+.anno[aria-checked="true"] .trk{background:var(--brand-grad)}
+.anno .knb{
+  position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;
+  background:var(--paper);transition:transform 120ms ease;
+  box-shadow:0 1px 2px rgba(16,24,32,.3);
+}
+.anno[aria-checked="true"] .knb{transform:translateX(14px)}
+.anno:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:3px}
+
+/* Five rows of a four-column grid, then scroll. Seven columns of ~128px made every
+   photograph a contact-sheet stamp you could not read without opening it; four columns
+   across the full sheet is ~240px a tile, which is the size the 320px thumbnail was
+   raised to serve. */
+.gal{
+  --gal-mask:linear-gradient(to bottom,transparent 0,#000 40px,
+              #000 calc(100% - 48px),transparent 100%);
+  -webkit-mask-image:var(--gal-mask);mask-image:var(--gal-mask);
+  max-height:min(1240px,86vh);overflow-y:auto;overscroll-behavior:contain;
+  scrollbar-width:none;-ms-overflow-style:none;
+}
+.gal::-webkit-scrollbar{display:none}
+.gal.at-start{
+  --gal-mask:linear-gradient(to bottom,#000 0,#000 calc(100% - 48px),transparent 100%);
+}
+.gal.at-end{--gal-mask:linear-gradient(to bottom,transparent 0,#000 40px,#000 100%)}
+.gal.at-start.at-end{--gal-mask:none}
+.grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
+  margin:0;padding:0;list-style:none;
+}
+@media (max-width:900px){.grid{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
+.grid figure{
+  position:relative;margin:0;min-width:0;aspect-ratio:1;
+  overflow:hidden;display:block;box-shadow:0 0 0 1px var(--rule);cursor:zoom-in;
+  background:var(--band);
+}
+.grid figure:hover{box-shadow:0 0 0 1px var(--ink-3)}
+.grid figure:focus-visible{outline:2px solid var(--brand-cyan-ink);outline-offset:2px}
+.grid img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+.grid .ov{position:absolute;inset:0;display:block;width:100%;height:100%}
+.ov{opacity:0;transition:opacity 120ms ease}
+body[data-anno="on"] .galwrap[data-tab="outcome"] .ov-outcome,
+body[data-anno="on"] .galwrap[data-tab="pred"] .ov-pred,
+body[data-anno="on"] .galwrap[data-tab="gt"] .ov-gt{opacity:1}
+.ob{fill:none;stroke-width:1.6;vector-effect:non-scaling-stroke}
+.ob-tp{stroke:var(--good)}
+.ob-fp{stroke:var(--serious)}
+.ob-fn{stroke:var(--warn);stroke-dasharray:4 3}
+.ob-pred{stroke:var(--brand-cyan-ink)}
+.ob-gt{stroke:var(--brand-teal-ink)}
+.ovt{
+  font-size:6.4px;font-weight:500;
+  paint-order:stroke;stroke:var(--paper);stroke-width:1.8px;stroke-linejoin:round;
+}
+/* the one transient blur surface: the hover caption strip (no border, no shadow) */
+.grid figcaption{
+  position:absolute;left:0;right:0;bottom:0;padding:3px 5px;
+  font-size:11.5px;line-height:1.4;color:var(--ink-1);text-align:left;
+  background:color-mix(in srgb,var(--paper) 82%,transparent);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  opacity:0;transition:opacity 100ms ease;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.grid figure:hover figcaption,.grid figure:focus-visible figcaption{opacity:1}
+.gal-legend{font-size:11px;color:var(--ink-3);margin:12px 0 0;min-height:17px}
+.gal-legend > span{display:none;gap:14px;align-items:center;flex-wrap:wrap}
+.galwrap[data-tab="outcome"] .lg-outcome,
+.galwrap[data-tab="pred"] .lg-pred,
+.galwrap[data-tab="gt"] .lg-gt{display:inline-flex}
+.gal-legend i{display:inline-flex;align-items:center;gap:6px;font-style:normal}
+.sw{width:9px;height:9px;flex:none}
+.sw.tp{background:var(--good)}
+.sw.fp{background:var(--serious)}
+.sw.fn{width:11px;height:11px;background:transparent;border:2px dashed var(--warn)}
+.sw.pd{background:var(--brand-cyan-ink)}
+.sw.gt{background:var(--brand-teal-ink)}
+
+/* ---------------------------- filter bar ------------------------------- */
+#filterbar{
+  position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:50;
+  display:flex;gap:12px;align-items:center;font-size:12.5px;color:var(--ink-1);
+  background:var(--paper);border:1px solid var(--rule);
+  padding:6px 8px 6px 16px;box-shadow:0 6px 20px -10px rgba(16,24,32,.4);
+}
+#filterbar[hidden]{display:none}
+#filterclear{
+  border:1px solid var(--rule);background:transparent;color:var(--ink-2);
+  padding:3px 10px;cursor:pointer;font:400 12px/1.4 var(--font-sans);
+}
+#filterclear:hover{background:var(--hover);color:var(--ink)}
+
+/* ---------------------------- lightbox (glass #3) ---------------------- */
+.lb{
+  position:fixed;inset:0;z-index:80;display:none;
+  align-items:center;justify-content:center;flex-direction:column;gap:14px;
+  background:color-mix(in srgb,var(--paper) 42%,transparent);
+  -webkit-backdrop-filter:blur(20px) saturate(140%);
+  backdrop-filter:blur(20px) saturate(140%);
+}
+.lb.on{display:flex}
+.lb-stage{
+  position:relative;background:var(--paper);overflow:hidden;
+  box-shadow:0 0 0 1px var(--rule),0 26px 60px -34px rgba(16,24,32,.55);
+  width:min(76vw,560px);aspect-ratio:1;
+}
+.lb-stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.lb-stage svg{position:absolute;inset:0;width:100%;height:100%}
+.lb-bar{
+  width:min(76vw,560px);display:flex;align-items:baseline;gap:16px;
+  font-size:12.5px;color:var(--ink-2);
+}
+.lb-cap{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-n{margin-left:auto;color:var(--ink-3);flex:none}
+.lb-btn{
+  background:var(--paper);border:1px solid var(--rule);color:var(--ink-1);
+  width:38px;height:38px;cursor:pointer;line-height:1;
+  font-size:19px;display:flex;align-items:center;justify-content:center;padding:0;
+  box-shadow:0 2px 8px -3px rgba(16,24,32,.3);
+}
+.lb-btn:hover{background:var(--hover)}
+.lb-btn.prev{position:absolute;left:max(18px,2.5vw);top:50%;transform:translateY(-50%)}
+.lb-btn.next{position:absolute;right:max(18px,2.5vw);top:50%;transform:translateY(-50%)}
+.lb-btn.x{position:absolute;right:max(18px,2.5vw);top:18px;font-size:14px}
+
+/* ---------------------------- hover tooltip ---------------------------- */
+.tip{
+  position:fixed;z-index:90;pointer-events:none;display:none;
+  font-size:12px;line-height:1.45;color:var(--ink-1);background:var(--paper);
+  border:1px solid var(--rule);padding:6px 9px;max-width:270px;
+  box-shadow:0 2px 10px -4px rgba(16,24,32,.35);font-variant-numeric:tabular-nums;
+}
+
+/* ---------------------------- footer ----------------------------------- */
+.caveats{font-size:12.5px;color:var(--ink-3);margin:14px 0 0;padding-left:18px}
+.caveats li{margin:0 0 7px}
+
+/* ---------------------------- print ------------------------------------ */
+@media print{
+  /* Has to match the specificity of :root[data-theme="dark"] and
+     :root:not([data-theme="light"]), or printing after the theme toggle keeps the dark
+     palette and lays near-white ink on white paper. */
+  :root,:root[data-theme="dark"],:root[data-theme="light"]{
+    --ink:#1B1D1E;--paper:#FFFFFF;--brand-cyan-ink:#017BA8;
+    --brand-teal-ink:#457F74;--brand-lime-ink:#618B36;
+    --good:#0ca30c;--warn:#b57614;--serious:#AD2111}
+  body::before{display:none}
+  .nav,.tgl,.lb,.tip,.toc,.banner,#filterbar,.tail{display:none!important}
+  .glass{background:none;border:0;box-shadow:none;backdrop-filter:none;
+         -webkit-backdrop-filter:none}
+  .kpis{border-top:1px solid #ccc;border-bottom:1px solid #ccc}
+  .wrap{padding-left:20px}
+  .read{background:none;border-left:1px solid #ccc}
+  .sheet{background:none;padding:0;margin:0;max-width:none}
+  .wrap{display:block;max-width:none;padding:0}
+  .gal{max-height:none;overflow:visible;-webkit-mask-image:none;mask-image:none}
+  /* No overlay rule here on purpose: the [data-tab]/[data-anno] rules already pick
+     exactly one layer, and forcing .ov-outcome visible printed it stacked on top of the
+     prediction layer, and printed it at all with annotations switched off. */
+  .anno,.tabs{display:none}
+  details{display:block}
+  section{break-inside:avoid;content-visibility:visible}
+  h2{break-after:avoid}
+}

@@ -7,6 +7,7 @@ exists. A 20,000-image test split and a 300-epoch run must produce the same repo
 """
 
 import json
+import re
 
 from src.report.build import publish_report
 from src.yolov8.metrics_utils import MAX_CURVE_POINTS
@@ -99,11 +100,30 @@ class TestEpochInvariance:
         assert set(short["figures"]) == set(long["figures"])
 
     def test_training_curves_are_downsampled(self, tmp_path):
-        """The only epoch-dependent payload, and it is capped."""
-        long = make_blob(tmp_path / "e2", epochs=3000)
-        points = len(long["figures"]["f_val_map"]["data"][0]["x"])
+        """The only epoch-dependent payload, and it is capped.
 
-        assert points <= MAX_CURVE_POINTS
+        Read off the drawn polyline rather than an array of numbers: the curve is an
+        SVG `points` list now, and its vertex count is the same claim.
+        """
+        long = make_blob(tmp_path / "e2", epochs=3000)
+        svg = long["figures"]["f_val_map"]["svg"]
+        vertices = [len(p.split()) for p in re.findall(r'points="([^"]+)"', svg)]
+
+        assert vertices, "the mAP curve drew no line at all"
+        assert max(vertices) <= MAX_CURVE_POINTS
+
+    def test_the_epoch_time_chart_is_bounded_too(self, tmp_path):
+        """The epoch-time chart is bounded too.
+
+        One bar per epoch is a figure that grows with epoch count, so past a dozen it
+        becomes a downsampled line instead.
+        """
+        long = make_blob(tmp_path / "e5", epochs=300)
+        svg = (long["figures"].get("f_epoch_seconds") or {}).get("svg", "")
+
+        if svg:
+            assert svg.count("<rect") <= 12
+            assert svg.count("data-tip") <= 24
 
     def test_report_size_does_not_grow_with_epochs(self, tmp_path):
         """3 epochs and 300 epochs render to within a few per cent of each other."""

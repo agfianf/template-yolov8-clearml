@@ -118,14 +118,14 @@ args_console = {
 }
 
 args_task = {
-    "model_name": "yolo11n-seg",
+    "model_name": "yolo11n",
     "model_latest_id": "",
     # Where a *locally launched* run creates its task. Read by init_clearml() before
     # Task.connect(), so editing these two in the ClearML UI renames nothing -- a task
     # that already exists keeps the project it was created in, and a clone inherits it.
     # Move an existing task with the UI's own project field instead.
     "clearml_project": "YOLO/Training",
-    "clearml_task_name": "yolo-train",
+    "clearml_task_name": "yolo-train plate 57+53 test46",
     # "pretrained": "(model_id)"
 }
 
@@ -135,13 +135,13 @@ args_data = {
         # whole projects and let every task in them be fetched. Projects are the
         # simpler knob -- a task added in CVAT later is then picked up on the next
         # run instead of being silently left out of training.
-        "task_ids_train": [741, 733, 731, 728],
-        "task_ids_test": [730],
+        "task_ids_train": [],
+        "task_ids_test": [],
         # Every task of these projects. Whatever ends up in the test set is
         # subtracted from training, so setting one task of a training project as
         # `task_ids_test` does the obvious thing rather than leaking it into both.
-        "project_ids_train": [],
-        "project_ids_test": [],
+        "project_ids_train": [57, 53],
+        "project_ids_test": [46],
     },
     "label_studio": {
         "project_id_train": None,
@@ -345,8 +345,8 @@ args_visualization = {
     "report_intended_use": "",
     "report_out_of_scope": "",
     "report_gallery_per_grid": 24,  # items per gallery grid, regardless of split size
-    "report_max_thumbnails": 200,  # hard cap on unique 192px thumbnails in the report
-    "report_thumbnail_px": 192,  # thumbnail edge in px; JPEG q80, 4:2:0
+    "report_max_thumbnails": 200,  # hard cap on unique 320px thumbnails in the report
+    "report_thumbnail_px": 320,  # thumbnail edge in px; JPEG q78, 4:2:2, lanczos
     # Score above which a false positive joins the "missing annotation" grid: the model
     # is confident and the labels disagree, which is usually the labels.
     "report_high_conf_fp_threshold": 0.7,

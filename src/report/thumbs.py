@@ -1,18 +1,42 @@
 """Thumbnail production for the report galleries.
 
-One tier only: a 192x192 JPEG at quality 80, 4:2:0, `optimize=True`, roughly 9 KB as
-base64. A second, larger tier for the lightbox was measured at ~28 KB each, which at the
-cap would be 5.6 MB on its own -- the entire size budget spent on a hover interaction.
-The lightbox enlarges the same bytes and says so in its caption.
+One tier only: a 320x320 JPEG at quality 78, 4:2:2, `optimize=True`, roughly 20 KB as
+base64. A second, larger tier for the lightbox was measured at ~28 KB each *on top of*
+this one, which at the cap would be another 5.6 MB -- the entire size budget spent on a
+hover interaction. The lightbox enlarges the same bytes and says so in its caption.
 
-Two shapes, for two different jobs:
+The edge was 192 px and the images read as soft, for three compounding reasons rather
+than one. The grid shows four columns across a ~970 px sheet, so a tile is displayed at
+about 240 px and a 192 px source was already being upscaled *in the grid*; the lightbox
+then took the same bytes to 560. The downscale used `BILINEAR`, which on a photographic
+image reduced by 5x or more aliases badly -- `LANCZOS` costs nothing per byte and is the
+correct filter for this ratio. And 4:2:0 chroma subsampling halves colour resolution in
+both axes, which is exactly what smears a small coloured object against its background.
+All three are fixed here; the cost is roughly 2.2x the bytes per thumbnail.
+
+**The thumbnail is the crop's own shape, not a square.** It used to be letterboxed onto
+a square canvas painted `(24, 24, 24)`, which put two near-black bands across a landscape
+photograph -- a third of every tile, in a report whose light theme is white paper. Worse,
+the padding arithmetic then had to be repeated exactly in `blob.py::_norm_boxes` so the
+overlay would line up with pixels this file had shifted. Saving the crop at its own
+aspect ratio deletes both: the letterbox is now CSS (`object-fit:contain` over
+`--band`, so it recolours with the theme) and the overlay is an SVG whose viewBox
+carries the same aspect ratio, which lands it on the image by construction.
+
+Two shapes, for two different jobs, and **neither carries a drawn box**:
 
 * **Instance crops** (`focus` set) crop to the object, expanded and squared. The crop
-  *is* the object, so no box is drawn -- a CSS ring in the outcome colour and a text
-  badge carry the meaning, and stay crisp at any zoom.
-* **Whole images** (`focus` unset) letterbox the frame and bake a 2px, text-free outline
-  in the fixed status colours, because a whole-image thumbnail with no marks is useless.
-  Labelled vector boxes are still drawn over it in the lightbox.
+  *is* the object, so a CSS ring in the outcome colour and a text badge carry the
+  meaning, and stay crisp at any zoom.
+* **Whole images** (`focus` unset) letterbox the frame and stop there. The overlay is an
+  SVG layer drawn over these pixels from `grids[].items[].boxes`, which `blob.py::
+  _norm_boxes` emits as thumbnail-normalised 0..1 floats.
+
+An outline used to be baked into the whole-image JPEGs. It is gone because the gallery
+now has one global annotations switch and three overlay tabs (outcome, prediction,
+ground truth) over the *same* thumbnail: baked pixels can be neither hidden nor
+re-coloured, so a switch over them is impossible. Vector boxes also stay sharp when the
+lightbox enlarges the same bytes, which the 2px outline did not.
 
 No pixels are held during validation: this runs afterwards, re-reading at most the cap's
 worth of files from the dataset directory, which is still on disk (`cleanup_cache`
@@ -26,7 +50,6 @@ import io
 
 from typing import Any
 
-from src.report.theme import OUTCOME_STYLE
 from src.utils.logging import Tally, get_logger
 
 
@@ -35,13 +58,16 @@ logger = get_logger(__name__)
 # Expansion around an instance crop, and the floor below which a crop is unreadable.
 CROP_SCALE = 1.6
 MIN_CROP_PX = 64
-JPEG_QUALITY = 80
+JPEG_QUALITY = 78
+# 4:2:2 rather than 4:2:0. On a 320px thumbnail of a small object, halving the chroma
+# resolution vertically as well as horizontally is visible as a colour smear.
+JPEG_SUBSAMPLING = 1
 
 
 class ThumbnailStore:
     """Base64 thumbnails, deduplicated by (file, crop) so shared items cost once."""
 
-    def __init__(self, size: int = 192, max_thumbs: int = 200) -> None:
+    def __init__(self, size: int = 320, max_thumbs: int = 200) -> None:
         self.size = int(size)
         self.max_thumbs = int(max_thumbs)
         self.thumbs: dict[str, str] = {}
@@ -112,7 +138,7 @@ class ThumbnailStore:
         )
 
     def _encode(self, item: dict, crop: tuple[int, int, int, int]) -> str | None:
-        from PIL import Image, ImageDraw
+        from PIL import Image
 
         with Image.open(item["im_file"]) as src:
             img = src.convert("RGB")
@@ -120,32 +146,17 @@ class ThumbnailStore:
         if cx1 > cx0 and cy1 > cy0:
             img = img.crop((cx0, cy0, cx1, cy1))
         size = self.size
-        canvas = Image.new("RGB", (size, size), (24, 24, 24))
         scale = min(size / max(img.width, 1), size / max(img.height, 1))
         new = (max(int(img.width * scale), 1), max(int(img.height * scale), 1))
-        img = img.resize(new, Image.Resampling.BILINEAR)
-        off = ((size - new[0]) // 2, (size - new[1]) // 2)
-        canvas.paste(img, off)
-
-        if not item.get("focus"):
-            draw = ImageDraw.Draw(canvas)
-            for box in (item.get("boxes") or [])[:20]:
-                colour = OUTCOME_STYLE.get(box[4], OUTCOME_STYLE["mixed"])[0]
-                x0 = off[0] + (float(box[0]) - cx0) * scale
-                y0 = off[1] + (float(box[1]) - cy0) * scale
-                x1 = off[0] + (float(box[2]) - cx0) * scale
-                y1 = off[1] + (float(box[3]) - cy0) * scale
-                if x1 - x0 < 1 or y1 - y0 < 1:
-                    continue
-                draw.rectangle([x0, y0, x1, y1], outline=colour, width=2)
+        img = img.resize(new, Image.Resampling.LANCZOS)
 
         buf = io.BytesIO()
-        canvas.save(
+        img.save(
             buf,
             format="JPEG",
             quality=JPEG_QUALITY,
             optimize=True,
-            subsampling=2,
+            subsampling=JPEG_SUBSAMPLING,
         )
         return base64.b64encode(buf.getvalue()).decode("ascii")
 

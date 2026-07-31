@@ -25,8 +25,8 @@
 | `report_intended_use` | `""` | str | One line for the model card: what this model is for |
 | `report_out_of_scope` | `""` | str | One line for the model card: what it must not be used for |
 | `report_gallery_per_grid` | `24` | int | Items per gallery grid, fixed regardless of split size |
-| `report_max_thumbnails` | `200` | int | Hard cap on unique 192px thumbnails in the whole report |
-| `report_thumbnail_px` | `192` | int | Thumbnail edge in px; JPEG q80, 4:2:0 |
+| `report_max_thumbnails` | `200` | int | Hard cap on unique 320px thumbnails in the whole report |
+| `report_thumbnail_px` | `320` | int | Long edge in px; JPEG q78, 4:2:2, lanczos, aspect kept |
 | `report_high_conf_fp_threshold` | `0.7` | float | Score above which a false positive joins the "missing annotation" grid |
 | `report_low_support_threshold` | `30` | int | Below this instance count a class is dimmed as unreliable |
 | `report_tide` | `True` | bool | Compute the ΔAP oracles; off falls back to error counts |
@@ -55,7 +55,7 @@ ClearML routes reports by the API call used, not by the name, so it is worth hav
 | `log_calibration` | `Distributions` / `TP vs FP Confidence`, `Calibration` / `Reliability Diagram` | Plots and Scalars | once per validation pass | two plots plus one scalar; also a per-batch memory cost during validation |
 | `log_confidence_histograms` | `Distributions`, `Distributions/Per-Class` | Plots | once, prediction stage | one plot plus **one per class** |
 | `log_static_plots` | `results`, `Labels` | Plots | once, end of training | three PNG uploads |
-| `html_report` | `evaluation_report` | **Artifacts** and Debug Samples (`Evaluation`/`report`) | once, after the final `val()` | one file, ~2-3 MB, of which 1.42 MB is the vendored plotly bundle |
+| `html_report` | `evaluation_report` | **Artifacts** and Debug Samples (`Evaluation`/`report`) | once, after the final `val()` | one file, ~1-3 MB, nearly all of it thumbnails |
 
 Several reports are **not** gated by anything in this group and will keep appearing with every flag turned off: the `Metrics/*` and `Losses/Validation` scalars (`_report_metric_scalars`), `Speed/Training/epoch_time_seconds`, the model-info single values on epoch 0, the `Mosaic` and `Validation` debug-sample galleries, the `Prediction` 2×2 image grids from the prediction stage, the `Export`/`Formats` table from [`7_export.md`](7_export.md), and the dataset composition report from the data stage. This group is a volume control on the analysis layer, not a mute button for the task.
 
@@ -199,19 +199,29 @@ The failure mode is worth knowing because it produces no error anywhere. `report
 
 ## The HTML evaluation report
 
-`html_report` builds one self-contained interactive HTML file at the end of the run and uploads it as the `evaluation_report` artifact, then reports its URL as media so it also appears under **Debug Samples** → `Evaluation` / `report`. It is the only report in this group that is not a ClearML plot: it is a whole page, with a sticky nav, sortable tables, lazily-rendered Plotly charts and five thumbnail galleries with a click-to-zoom overlay. Everything else here answers one question each; this answers "what happened in this run" in one place you can send to somebody.
+`html_report` builds one self-contained interactive HTML file at the end of the run and uploads it as the `evaluation_report` artifact, then reports its URL as media so it also appears under **Debug Samples** → `Evaluation` / `report`. It is the only report in this group that is not a ClearML plot: it is a whole page, with a floating table of contents, sortable tables, hand-authored SVG charts and five thumbnail galleries with three switchable overlay layers and a click-to-zoom lightbox. Everything else here answers one question each; this answers "what happened in this run" in one place you can send to somebody.
 
 It is built **once, from the final `val()` only** — the standalone pass `src/train.py` runs after training, on the test split when there is one. It never runs per epoch, and the training-curve appendix is the only part of it that reads anything epoch-shaped. `src/report/build.py` is called between `_report_final_scalars()` and `export_handler()`, inside its own `try/except`, so a report that fails costs the report and nothing else — the export and prediction stages after it are untouched.
 
 **Open it in a new tab.** The Debug Samples panel shows the page in an iframe whose sandbox policy is undocumented and has tightened before, so the first element on the page is a banner linking to the report's own URL with `target="_blank"`. That link is `href=""`, which the browser resolves to the current document — no JavaScript, and the generator never has to know its own address, so the escape hatch works even when the iframe blocks scripts entirely.
 
-**Nothing is fetched from the network.** The page inlines its CSS, its JavaScript, a vendored `plotly.js-cartesian-dist-min@3.7.0` bundle (1.42 MB, committed under `src/report/assets/` and re-fetchable with `make fetch-plotlyjs`, which verifies a pinned sha256) and every thumbnail as base64. `plotly.py`'s own `include_plotlyjs=True` is 4.85 MB and is banned. One CDN reference would turn half the page blank on any deployment without outbound access, with no error anywhere, so `tests/report/test_report_html.py` fails the build on any `src=`/`href=`/`url()` that is not an anchor, a `data:` URI or the deliberate outbound link to the ClearML task.
+**Nothing is fetched from the network, and there is no chart library at all.** Every figure is hand-authored SVG built in `src/report/figures.py` and inlined into the document, so the charts are in the DOM before any script runs and they survive printing and a script-blocked iframe. That replaced a vendored 1.42 MB plotly bundle which was two thirds of the file; `tests/report/test_report_html.py::test_no_chart_library_ships_at_all` is what keeps it from coming back. The page inlines its CSS, its JavaScript, the 4 KB table sorter and every thumbnail as base64. One CDN reference would turn half the page blank on any deployment without outbound access, with no error anywhere, so the same suite fails the build on any `src=`/`href=`/`url()` that is not an anchor, a `data:` URI or the deliberate outbound link to the ClearML task.
+
+**Colour lives in one place.** The SVG carries no hex: every mark names a CSS custom property, so the light/dark toggle recolours the charts with no redraw, and `report.css` is the only file that knows the palette.
 
 ### What is in it
 
-Twelve sections, in this order: header and KPI tiles; model card; dataset and split composition; the per-class table; the confusion matrix and the most-confused pairs; the operating-threshold panel; the TIDE-style error decomposition; size and shape strata; box against mask (segmentation runs only); five galleries; the training-curve appendix; and a caveats footer.
+Fourteen sections, in this order: header, experiment tags and KPI tiles; highlights and warnings; model card; the environment; dataset and split composition, including the image-file statistics; the per-class table; the confusion matrix and the most-confused pairs; the operating-threshold panel; the TIDE-style error decomposition; size and shape strata; box against mask (segmentation runs only); five galleries; the training-curve appendix; and a caveats footer.
+
+Each section carries a line icon in a pastel tile and, where the subject needs it, a **How to read it** block: what the section is, then what to do with it. The two are separate on purpose. A single terse line was trying to answer both questions at once, which worked for anyone who already knew what a ΔAP oracle or an operating threshold was and left everybody else with a chart and no way in. The error decomposition also prints the six type names — Cls, Loc, Both, Dupe, Bkg, Miss — with a plain sentence each, because the figure said what each one costs and the table said what to do about it and neither ever said what they were.
+
+Navigation is the floating contents list alone. It used to be duplicated as a row of links in the header, which is a second thing to maintain, a second thing to read and a second position indicator disagreeing with the first. Below 1180 px, where the rail has nowhere to sit, the header's **Contents** button opens the same list as a panel.
 
 Three things about it are deliberate and worth knowing before you read a number off it.
+
+**Highlights describe, they never diagnose.** The block under the KPI strip states five to seven measured facts with their numbers and stops: what the classes are, which error type is largest and by how much, where F1 peaks, what the images are. No line says what a number usually means or what to do about it. That is the whole contract of the block, and it is what lets it sit beside the warnings list in the same flat register without the two competing — warnings say something is wrong, highlights say what the run is. `blob["highlights"]` is a list of plain sentences; the renderer weights their figures so the numbers scan down the column.
+
+**Nothing about the environment fails the report.** The `Environment` section reads the hostname, GPU, CUDA, torch and Python locally on the agent, the worker id and the start timestamp off the ClearML task, and the per-epoch durations by differencing the cumulative `time` column of `results.csv`. Every field degrades on its own: one that cannot be read prints `unknown` on its own line and never removes the row, because a missing row reads as a machine that had no GPU rather than as a lookup that failed.
 
 **Every KPI tile prints the confidence and IoU it was computed at.** A finished task shows at least three coexisting confidence thresholds — the 0.001 NMS floor that mAP and every curve are computed at, the 0.25 display threshold the confusion matrix and every gallery are drawn at, and the F1-optimal threshold you would actually deploy at — and a metric with no stated basis is a rumour. The model card repeats the three with the run's actual numbers.
 
@@ -223,7 +233,9 @@ Three things about it are deliberate and worth knowing before you read a number 
 
 Report volume must not grow with dataset size or with epoch count — the same rule as the rest of this group, applied to a file rather than to a plot count. Every distribution in the page is binned in Python before it is serialised, every gallery holds a fixed item count, and the training curves are downsampled to `MAX_CURVE_POINTS`. `tests/report/test_report_volume.py` builds the report at 50 images and at 3,000 and asserts the rendered file differs by under 5%; measured, it differs by about 0.2%.
 
-`report_gallery_per_grid` (24) × five grids is the item count, and `report_max_thumbnails` (200) is the hard ceiling on unique 192px JPEGs after deduplication — two grids referencing the same crop of the same file share one base64 string. At roughly 9 KB each, 200 thumbnails is 1.8 MB, which is most of what this project actually controls in the file. Raising either raises the file size linearly. A second, larger thumbnail tier for the lightbox was measured at ~28 KB each and is deliberately absent: the lightbox enlarges the same bytes and its caption says "192 px thumbnail, enlarged" so nobody reads the softness as a model artefact.
+`report_gallery_per_grid` (24) × five grids is the item count, and `report_max_thumbnails` (200) is the hard ceiling on unique JPEGs after deduplication — two grids referencing the same crop of the same file share one base64 string. At roughly 20 KB each, 200 thumbnails is about 4 MB, which is most of what this project actually controls in the file. Raising either raises the file size linearly. A second, larger thumbnail tier for the lightbox was measured at ~28 KB each *on top of* this one and is deliberately absent: the lightbox enlarges the same bytes and its caption says how big they are, so nobody reads the softness as a model artefact.
+
+The long edge was 192 px until the gallery went to four columns. At four columns across the sheet a tile is displayed at about 240 px, so 192 px was being upscaled in the grid before the lightbox enlarged it again; the downscale also used `BILINEAR`, which aliases badly at these ratios, and 4:2:0 chroma subsampling smeared small coloured objects against their background. The three together are what "the images look blurry" was. 320 px, `LANCZOS` and 4:2:2 cost roughly 2.2× the bytes per thumbnail and fix all three.
 
 `report_cm_max_classes` (60) truncates the confusion heatmap to the classes with the most ground truth, because that payload is O(n²); the caption states the truncation and the per-class table still carries every row up to its own 120-row cap.
 
@@ -242,6 +254,21 @@ The wrapper cannot raise into validation. `note()` is wrapped, failures are tall
 ### When it is not there
 
 Every input is allowed to be missing, and each absence becomes a card naming what is gone rather than an exception. No capture: no error decomposition, no strata, no galleries. `log_calibration = False`: no reliability diagram and no TP-vs-FP split. `plots = False`: no confusion matrix. No `results.csv`: no training appendix. Unreadable images: empty grids with a reason. A cleaned-up dataset directory: no split composition. Every one of them is also listed in the caveats footer, and `tests/report/test_report_degradation.py` asserts the artifact still uploads in all of them.
+
+### Reviewing a report without training again
+
+A GPU run is an eleven-minute round trip and a version bump, which is far too slow a loop for "this caption reads badly" or "that table wants one more column". `tools/report_preview.py` closes it to about a second, and there are two ways in because there are two kinds of change.
+
+```bash
+make report-preview SRC=<path or artifact URL>    # a published report, page rebuilt
+make report-fixture                               # synthetic data, every figure redrawn
+```
+
+`replay` is the one to reach for. A published page carries its whole blob in `#report-data` — everything except the figures, which `render.py` strips out because the SVG is already sitting in the markup — so the tool lifts those SVG elements back out of the old document and hands them to the renderer as if they had just been drawn. The result is the real run's numbers, thumbnails, warnings and highlights, laid out by whatever is in the working tree right now. Template, stylesheet, script, section order, wording, captions, the TOC: all live. **Figure geometry is the one thing that is frozen**, because the arrays behind each chart were never serialised; `figures.py` edits do not show up in a replay and the tool logs a warning saying so.
+
+`fixture` builds the blob the report tests use, through the real pipeline, so `figures.py` and `blob.py` changes appear — at the cost of invented numbers over sixty synthetic images. `SEG=1`, `CLASSES=n` and `OUT=` are accepted; `SRC=` and `OUT=` take a local path or, for `SRC`, the artifact URL straight out of the ClearML UI.
+
+Neither writes to ClearML and neither needs a GPU. Both print a `file://` URL to open.
 
 ### Gotchas specific to this report
 

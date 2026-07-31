@@ -70,22 +70,17 @@ test_fast:
 test_report:
 	PYTHONPATH=. uv run pytest tests/report -v
 
-# Re-fetch the vendored plotly bundle. The file is COMMITTED -- this target exists to
-# prove it is reproducible, not to run on every build. plotly.py 6.9.0 ships only the
-# full 4.85 MB bundle inside the wheel, and `include_plotlyjs=True` would put all of it
-# in every report; the cartesian build is 1.42 MB and covers every trace type used.
-# Bump both the version and the checksum together, never one alone.
-PLOTLY_JS_VERSION := 3.7.0
-PLOTLY_JS_SHA256 := 7c593b9eda0e74a1d07335cf89cbf7a55ffc114909980c3729af835453bdb02a
-PLOTLY_JS_PATH := src/report/assets/plotly-cartesian.min.js
+# Re-render the report locally, without a GPU run, and print a file:// URL.
+# `SRC=` is a published evaluation_report.html -- a local path or its artifact URL --
+# whose page is rebuilt around the working tree's template, stylesheet, script and
+# section code. The figures it carries are reused as drawn, so figures.py changes need
+# report-fixture instead, which redraws all of them from the test suite's synthetic run.
+report-preview:
+	PYTHONPATH=. uv run tools/report_preview.py replay "$(SRC)" $(if $(OUT),-o "$(OUT)")
 
-fetch-plotlyjs:
-	curl -fsSL -o $(PLOTLY_JS_PATH).tmp \
-	https://cdn.jsdelivr.net/npm/plotly.js-cartesian-dist-min@$(PLOTLY_JS_VERSION)/plotly-cartesian.min.js
-	echo "$(PLOTLY_JS_SHA256)  $(PLOTLY_JS_PATH).tmp" | sha256sum -c -
-	mv $(PLOTLY_JS_PATH).tmp $(PLOTLY_JS_PATH)
-	@echo "$(PLOTLY_JS_PATH) verified at $(PLOTLY_JS_VERSION)"
-
+report-fixture:
+	PYTHONPATH=. uv run tools/report_preview.py fixture $(if $(SEG),--seg) \
+	$(if $(CLASSES),--classes $(CLASSES)) $(if $(OUT),-o "$(OUT)")
 
 # Must mirror the Dockerfile's `uv sync --frozen --no-dev`: this file is fed to
 # Task.add_requirements(), so it defines the env a non-docker agent rebuilds.

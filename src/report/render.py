@@ -5,11 +5,14 @@ rewrite `pyproject.toml` and `uv.lock` -- both of which the Dockerfile bind-moun
 its `uv sync` layer, so a templating library would cost an ~8 GB dependency rebuild.
 The template is one HTML file with `{{TOKEN}}` placeholders and `str.replace` fills them.
 
-The markup here is deliberately thin: tables (which need real `<thead>`/`<tbody>` for the
-vendored sorter) and gallery shells (which need `data-classes` / `data-pairs` for the CSS
-filter) are server-rendered; everything else is one `<div data-fig>` that the runtime
-fills. That is what keeps the DOM inside its node budget while every number in the page
-stays inspectable in the JSON blob.
+The markup here is deliberately thin, but the line has moved: figures are now finished
+SVG and are inlined straight into the document, so they are in the DOM before any script
+runs and they survive printing and a script-blocked iframe. Everything whose node count
+would grow with the gallery -- the three overlay layers over each thumbnail -- is still
+built by the runtime from the blob, a tile at a time.
+
+**Figures are stripped from the JSON blob before it is serialised.** They are already in
+the document; shipping both would put every chart in the file twice.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from src.report import theme
 from src.utils.logging import get_logger
 
 
@@ -28,23 +30,79 @@ logger = get_logger(__name__)
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 
-# (anchor, nav label). A section with nothing to say is dropped from both.
+# (anchor, contents label). A section with nothing to say is dropped from the list.
+# Environment sits third rather than second-to-last: it answers "what machine, which
+# code, how long" -- the questions a reader asks while deciding whether to trust the
+# numbers at all, which is before they read any of them, not after.
 SECTION_ORDER = (
     ("s-header", "Summary"),
+    ("s-highlights", "Highlights"),
     ("s-model-card", "Model card"),
-    ("s-dataset", "Dataset & splits"),
+    ("s-environment", "Environment"),
+    ("s-dataset", "Dataset"),
     ("s-per-class", "Per-class"),
     ("s-confusion", "Confusion"),
-    ("s-threshold", "Thresholds"),
+    ("s-threshold", "Threshold"),
     ("s-tide", "Error types"),
-    ("s-strata", "Size & shape"),
+    ("s-strata", "Size &amp; shape"),
     ("s-boxmask", "Box vs mask"),
     ("s-galleries", "Galleries"),
-    ("s-training", "Training curves"),
+    ("s-training", "Training"),
     ("s-caveats", "Caveats"),
 )
 
-SEVERITY_ICON = {"warning": "!", "serious": "!!", "critical": "!!!"}
+# One 16px line icon and one pastel accent per section. Both are chrome: the icon is a
+# landmark for a reader scrolling past, and the accent tints only the icon tile, never
+# the type or the data. Six accents cycle, so nothing here has to stay in step with the
+# section count.
+SECTION_ICONS = {
+    "s-highlights": "M8 1.6 9.7 6l4.7.3-3.6 3 1.2 4.4L8 11.3 4 13.7l1.2-4.4-3.6-3L6.3 6z",
+    "s-model-card": "M2 3.5h12v9H2zM4.5 6.5h3v3h-3M9.5 6.6h3M9.5 9.4h3",
+    "s-environment": "M2 3.5h12v4H2zM2 8.5h12v4H2M4.4 5.5h.1M4.4 10.5h.1",
+    "s-dataset": "M8 1.8 14.5 5 8 8.2 1.5 5zM1.5 8l6.5 3.2L14.5 8M1.5 11l6.5 3.2L14.5 11",
+    "s-per-class": "M2 4h12M2 8h12M2 12h12M2 4v0M2 8v0M2 12v0",
+    "s-confusion": "M2.5 2.5h11v11h-11zM6.2 2.5v11M9.8 2.5v11M2.5 6.2h11M2.5 9.8h11",
+    "s-threshold": "M3 4h10M3 8h10M3 12h10M6 2.4v3.2M11 6.4v3.2M5 10.4v3.2",
+    # A segmented bar, because that is what the section draws.
+    "s-tide": "M1.5 5.5h13v5h-13zM5.8 5.5v5M9.4 5.5v5M12 5.5v5",
+    "s-strata": "M2 13.5 6 8l3 3.5L14 4M2 2.5v11h12",
+    "s-boxmask": "M2.5 2.5h8v8h-8zM5.5 5.5h8v8h-8z",
+    "s-galleries": "M2 3.5h12v9H2zM2 10l3.5-3.5 3 3M9 8.6 11.5 6l2.5 2.5M5.5 6.2h.1",
+    "s-training": "M2 2.5v11h12M4 11 7 7.5l2.5 2L13 4",
+    "s-caveats": "M8 1.8A6.2 6.2 0 1 0 8 14.2 6.2 6.2 0 0 0 8 1.8zM8 5v.1M8 7.4v4",
+    # Not a section of its own: the warnings list inside the highlights borrows this.
+    "warnings": "M8 2 15 14H1zM8 6.4v3.4M8 11.6v.1",
+}
+ACCENT_STEPS = 6
+ACCENT_OF = {a: i % ACCENT_STEPS for i, (a, _) in enumerate(SECTION_ORDER)}
+
+# The six TIDE error types in the words a reader would use. The table below the chart
+# says what to do about each one and the figure says what each one costs; neither of
+# them ever said what the six words mean, which made the whole section unreadable to
+# anyone who had not met TIDE before.
+TIDE_TYPES = (
+    ("Cls", "Box in the right place, wrong label on it."),
+    ("Loc", "Right label, but the box is not tight enough to count as a hit."),
+    ("Both", "Wrong label <em>and</em> a box that does not fit. Two errors in one."),
+    ("Dupe", "A second detection on an object that was already found."),
+    ("Bkg", "A detection with nothing under it: the model saw what was not there."),
+    ("Miss", "A real object no detection covered at all."),
+)
+
+# The three overlay layers, and what each one's legend says. The layers themselves are
+# drawn by `report.js` from `grids[].items[].boxes`; this is only the strip of text.
+GALLERY_TABS = (
+    ("outcome", "Outcome"),
+    ("pred", "Prediction"),
+    ("gt", "Ground truth"),
+)
+
+# A run of digits, thousands separators, one decimal point and an optional unit sign.
+# Highlights arrive from the blob as plain sentences; this is what makes their numbers
+# scan down the column without the builder having to emit markup. The lookbehind is what
+# keeps it from weighting the "50" inside dAP50 and the "1" inside F1 -- those are parts
+# of a name, not figures.
+NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?%?x?")
 
 
 def _asset(name: str) -> str:
@@ -70,6 +128,17 @@ def _fmt(value: Any, kind: str = "num2") -> str:
     return f"{f:.4f}" if kind == "num2" else f"{f:g}"
 
 
+class _Figures:
+    """Continuous `Fig N.` numbering across sections, skipping the ones not built."""
+
+    def __init__(self) -> None:
+        self.n = 0
+
+    def next(self) -> int:
+        self.n += 1
+        return self.n
+
+
 # --- building blocks ----------------------------------------------------------------
 
 
@@ -79,8 +148,12 @@ def fig_block(
     caption: str = "",
     missing: str = "",
     applicable: bool = True,
+    *,
+    title: str = "",
+    num: _Figures | None = None,
+    wide: bool = True,
 ) -> str:
-    """One lazily-rendered figure, or a card explaining why it is not there.
+    """One inlined figure, or a card explaining why it is not there.
 
     `applicable` separates two things a reader must not have to tell apart. A "not
     captured" card means the figure *could* have existed on this run and something
@@ -92,11 +165,18 @@ def fig_block(
     """
     if not applicable:
         return ""
-    if fig_id not in (blob.get("figures") or {}):
+    payload = (blob.get("figures") or {}).get(fig_id)
+    if not payload or not payload.get("svg"):
         text = missing or "Not captured for this run."
         return f'<p class="missing">{e(text)}</p>'
-    cap = f'<p class="caption">{caption}</p>' if caption else ""
-    return f'<div class="fig" data-fig="{e(fig_id)}"></div>{cap}'
+    head = f'<p class="fig-t">{e(title)}</p>' if title else ""
+    label = f"<b>Fig {num.next()}.</b> " if num is not None else ""
+    foot = f"<figcaption>{label}{caption}</figcaption>" if (caption or label) else ""
+    cls = "wide" if wide else ""
+    return (
+        f'<figure class="{cls}" data-fig="{e(fig_id)}">{head}{payload["svg"]}{foot}'
+        "</figure>"
+    )
 
 
 def table_block(blob: dict, table_id: str, missing: str = "") -> str:
@@ -135,8 +215,8 @@ def table_block(blob: dict, table_id: str, missing: str = "") -> str:
         body.append(f"<tr {' '.join(attrs)}>{''.join(cells)}</tr>")
     note = f'<p class="caption">{table.get("note", "")}</p>' if table.get("note") else ""
     return (
-        f'<div class="scrollx"><table class="sortable"><thead><tr>{head}</tr></thead>'
-        f"<tbody>{''.join(body)}</tbody></table></div>{note}"
+        f'<div class="scrollx wide"><table class="sortable"><thead><tr>{head}</tr>'
+        f"</thead><tbody>{''.join(body)}</tbody></table></div>{note}"
     )
 
 
@@ -156,9 +236,63 @@ def _cell(value: Any) -> str:
     return e(value)
 
 
-def _section(anchor: str, title: str, sub: str, body: str) -> str:
+def _section(anchor: str, title: str, sub: str, body: str, read: str = "") -> str:
+    """One section: icon, heading, what it is, how to read it, then the body.
+
+    `sub` says what the section *is*, in words that assume nothing. `read` says what to
+    do with it -- which direction is bad, what a healthy shape looks like, what it would
+    mean if it were wrong. They are two different questions and were being answered as
+    one terse line, which is why sections like the error decomposition read as jargon.
+    """
+    heading = f"<h2>{_icon(anchor)}<span>{e(title)}</span></h2>" if title else ""
     subtitle = f'<p class="sub">{sub}</p>' if sub else ""
-    return f'<section id="{anchor}"><h2>{e(title)}</h2>{subtitle}{body}</section>'
+    guide = f'<p class="read"><b>How to read it.</b> {read}</p>' if read else ""
+    accent = ACCENT_OF.get(anchor, 0)
+    return (
+        f'<section id="{anchor}" data-accent="{accent}">'
+        f"{heading}{subtitle}{guide}{body}</section>"
+    )
+
+
+def _icon(anchor: str) -> str:
+    """Return the section's line icon in its pastel tile, or "" if it has none."""
+    path = SECTION_ICONS.get(anchor)
+    if not path:
+        return ""
+    return (
+        '<span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="16" '
+        f'height="16"><path d="{path}"/></svg></span>'
+    )
+
+
+def _stat_column(heading: str, rows) -> str:
+    """One flat column of `label  value` lines. No box, no accent edge, no glass."""
+    lines = []
+    for label, value in rows:
+        zero = " zero" if value in (0, "0", "", None) else ""
+        # Escaped even though every value here is ours: the image-stat rows are keyed by
+        # PIL's `mode` and `format`, which come off a file header, and a value read from
+        # a file is never markup.
+        shown = e(value) if isinstance(value, str) else _cell(value)
+        lines.append(f'<p class="stat-l{zero}"><span>{e(label)}</span><b>{shown}</b></p>')
+    return (
+        f'<div class="statcol"><p class="stat-h">{e(heading)}</p>{"".join(lines)}</div>'
+    )
+
+
+def _glossary(pairs) -> str:
+    """Render a term-and-plain-meaning list. The terms are ours, so trusted."""
+    items = "".join(
+        f"<div><dt>{term}</dt><dd>{meaning}</dd></div>" for term, meaning in pairs
+    )
+    return f'<dl class="gloss wide">{items}</dl>'
+
+
+def _bold_numbers(text: str) -> str:
+    """Escape one highlight line and weight its figures so they scan down the column."""
+    # quote=False on purpose: `&#x27;` carries digits, and bolding the guts of an entity
+    # would print the escape itself.
+    return NUMBER.sub(lambda m: f"<b>{m.group(0)}</b>", html.escape(text, quote=False))
 
 
 # --- sections -----------------------------------------------------------------------
@@ -172,61 +306,103 @@ def _header(blob: dict) -> str:
         if meta.get("task_url")
         else e(meta.get("task_id") or "-")
     )
-    splits = ", ".join(f"{k} {v:,}" for k, v in (meta.get("split_counts") or {}).items())
-    fields = [
-        ("Model", meta["model_name"]),
-        ("Task", f"{meta['task_yolo']} @ imgsz {meta['imgsz']}"),
-        ("Split", f"{meta['split_name']} ({meta['val_images']:,} images)"),
-        ("Split sizes", splits or "not recounted"),
-        ("ClearML task", link),
-        ("Git commit", (meta.get("git_commit") or "unknown")[:12]),
-        ("Image tag", meta["image_tag"]),
-        ("Template version", meta["code_version"]),
-        ("Ultralytics", meta["ultralytics"]),
-        ("Generated", meta["generated_utc"]),
-    ]
-    cells = "".join(
-        f"<div><span>{e(label)}</span>{value if label == 'ClearML task' else e(value)}"
-        "</div>"
-        for label, value in fields
+    tags = "".join(f"<li>{e(t)}</li>" for t in (meta.get("tags") or []))
+    # Omitted entirely when there are none: an empty rail reads as a missing feature.
+    tag_rail = (
+        f'<ul class="tags" aria-label="Experiment tags">{tags}</ul>' if tags else ""
     )
+    bits = [
+        f"<b>{e(meta['model_name'])}</b>",
+        f"imgsz {e(meta['imgsz'])}",
+        f"split <b>{e(meta['split_name'])}</b> ({meta['val_images']:,} images)",
+        f"generated {e(meta['generated_utc'])}",
+        f'commit <span class="mono">{e((meta.get("git_commit") or "?")[:12])}</span>',
+        f'<span class="mono">{e(meta["image_tag"])}</span>',
+        f"ultralytics {e(meta['ultralytics'])}",
+        f"task {link}",
+    ]
     tiles = []
     for kpi in blob.get("kpis") or []:
         value = kpi.get("value")
-        meter = ""
         scale = kpi.get("scale")
+        ring = ""
         if scale and value is not None:
             lo, hi = scale
             pct = 0.0 if hi == lo else max(0.0, min(1.0, (value - lo) / (hi - lo)))
-            meter = f'<div class="meter"><i style="width:{pct * 100:.0f}%"></i></div>'
+            ring = _ring(pct, f"{kpi['label']} {_fmt(value, kpi.get('fmt', 'num2'))}")
         tiles.append(
-            f'<div class="kpi"><div class="lab">{e(kpi["label"])}</div>'
-            f'<div class="val">{_fmt(value, kpi.get("fmt", "num2"))}</div>'
-            f"{meter}"
-            f'<div class="basis">{e(kpi.get("basis") or "not computed")}</div></div>'
+            f'<div class="kpi">{ring}'
+            f'<span class="kpi-v">{_fmt(value, kpi.get("fmt", "num2"))}</span>'
+            f'<span class="kpi-l">{e(kpi["label"])}</span>'
+            f'<span class="kpi-b">{e(kpi.get("basis") or "not computed")}</span></div>'
         )
     return _section(
         "s-header",
-        e(meta["run_name"]),
-        "Every tile states the confidence and IoU it was computed at. They differ on "
-        "purpose.",
-        f'<div class="meta">{cells}</div><div class="kpis">{"".join(tiles)}</div>',
+        "",
+        "",
+        f"<h1>{e(meta['run_name'])}</h1>{tag_rail}"
+        f'<p class="meta">{" &middot; ".join(bits)}</p>'
+        f'<div class="kpis glass wide">{"".join(tiles)}</div>',
+    )
+
+
+def _ring(fraction: float, tip: str) -> str:
+    """Draw a 30px progress ring. Its value is printed beside it, never inside it."""
+    r = 12.0
+    circumference = 2 * 3.14159265 * r
+    filled = circumference * max(0.0, min(1.0, fraction))
+    return (
+        f'<svg class="ring" viewBox="0 0 30 30" role="img" data-tip="{e(tip)}" '
+        f'aria-label="{e(tip)}"><circle class="rk" cx="15" cy="15" r="{r:g}"/>'
+        f'<circle class="ra" cx="15" cy="15" r="{r:g}" '
+        f'stroke-dasharray="{filled:.2f} {circumference - filled:.2f}" '
+        f'transform="rotate(-90 15 15)"/></svg>'
+    )
+
+
+def _highlights(blob: dict) -> str:
+    """Measured facts, then the warnings, in the same flat register.
+
+    Deliberately siblings rather than competing banners: warnings say something is
+    wrong, highlights say what the run is, and neither is a box with a coloured edge.
+    """
+    lines = "".join(f"<li>{_bold_numbers(h)}</li>" for h in blob.get("highlights") or [])
+    body = (
+        f'<ul class="hl">{lines}</ul>'
+        if lines
+        else '<p class="missing">Nothing measurable was available to summarise.</p>'
+    )
+    flags = "".join(
+        f'<li><span class="sd {e(w["severity"])}" aria-hidden="true"></span>'
+        f"<span>{e(w['text'])}</span></li>"
+        for w in blob.get("warnings") or []
+    )
+    if flags:
+        # Its own h2 rather than an h3: a warning outranks the list above it. It takes
+        # the section's own accent, so it reads as a sibling heading and not as a second
+        # section that the contents list forgot.
+        body += (
+            f"<h2>{_icon('warnings')}<span>Warnings</span></h2>"
+            f'<ul class="flags">{flags}</ul>'
+        )
+    return _section(
+        "s-highlights",
+        "Highlights",
+        "The shortest honest summary of this run. Every line is something that was "
+        "measured, written out in full, and every one of them can be checked against a "
+        "figure further down. Nothing here is an opinion about the model.",
+        body,
     )
 
 
 def _model_card(blob: dict) -> str:
     card = blob["model_card"]
-    banners = "".join(
-        f'<div class="warn {e(w["severity"])}"><b>{SEVERITY_ICON.get(w["severity"], "!")}'
-        f"</b><span>{e(w['text'])}</span></div>"
-        for w in blob.get("warnings") or []
-    )
     diff_rows = "".join(
         f"<tr><td>{e(k)}</td><td>{e(v)}</td><td>{e(d)}</td></tr>"
         for k, v, d in card.get("config_diff") or []
     )
     diff = (
-        '<div class="scrollx"><table class="sortable"><thead><tr><th>Parameter</th>'
+        '<div class="scrollx wide"><table class="sortable"><thead><tr><th>Parameter</th>'
         "<th>This run</th><th>Ultralytics default</th></tr></thead><tbody>"
         f"{diff_rows}</tbody></table></div>"
         if diff_rows
@@ -234,7 +410,6 @@ def _model_card(blob: dict) -> str:
     )
     full = "\n".join(f"{k} = {v}" for k, v in card.get("config_full") or [])
     body = (
-        f"{banners}"
         f"<h3>Intended use</h3><p>{e(card['intended_use'])}</p>"
         f"<h3>Out of scope</h3><p>{e(card['out_of_scope'])}</p>"
         f"<h3>Three thresholds</h3><p>{e(card['thresholds_note'])}</p>"
@@ -251,7 +426,7 @@ def _model_card(blob: dict) -> str:
     )
 
 
-def _dataset(blob: dict) -> str:
+def _dataset(blob: dict, num: _Figures) -> str:
     # Mask fill ratio and polygon vertex counts do not exist on a detect run -- the
     # label files carry four numbers per line and there is no polygon to measure.
     seg = bool(blob["meta"].get("is_seg"))
@@ -261,13 +436,49 @@ def _dataset(blob: dict) -> str:
             "f_class_bars",
             "Log axis, because the class you have to worry about is the sliver.",
             "The dataset label files were not readable, so composition is unavailable.",
+            title="Instances per class, all splits",
+            num=num,
         )
-        + fig_block(blob, "f_split_stack", "Sorted so a zero-validation class is first.")
+        + fig_block(
+            blob,
+            "f_split_stack",
+            "Sorted so a zero-validation class is first.",
+            title="Instances per class by split",
+            num=num,
+        )
         + table_block(blob, "t_split_composition", "No split composition was recounted.")
-        + fig_block(blob, "f_objects_per_image")
-        + fig_block(blob, "f_box_size")
-        + fig_block(blob, "f_aspect")
-        + fig_block(blob, "f_center_heat")
+        + fig_block(
+            blob,
+            "f_objects_per_image",
+            "Only the modal bin and the p99.5 cut are labelled; thirty printed numbers "
+            "would bury the shape they describe.",
+            title="Objects per image",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_box_size",
+            "The dashed lines are this dataset's own terciles, in pixels at this run's "
+            "imgsz.",
+            title="Object size",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_aspect",
+            "log(w/h), so a tall box and a wide one of the same ratio sit the same "
+            "distance either side of zero.",
+            title="Object aspect ratio",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_center_heat",
+            "One cell is a sixteenth of the frame across by a sixteenth down. The ramp "
+            "is a single hue, so the reading is magnitude and never category.",
+            title="Box centres over the frame",
+            num=num,
+        )
         + fig_block(
             blob,
             "f_mask_fill",
@@ -276,16 +487,67 @@ def _dataset(blob: dict) -> str:
             "No polygons were found in the label files, so the mask fill ratio could "
             "not be measured.",
             applicable=seg,
+            title="Mask fill ratio",
+            num=num,
         )
-        + fig_block(blob, "f_poly_vertices", applicable=seg)
+        + fig_block(
+            blob,
+            "f_poly_vertices",
+            "Four vertices is a rectangle drawn with the polygon tool, and the mask "
+            "metric cannot tell it from a box.",
+            applicable=seg,
+            title="Polygon vertex count",
+            num=num,
+        )
         + "<h3>Annotation quality flags</h3>"
         + table_block(blob, "t_quality_flags", "No quality flags were raised.")
+        + _image_files(blob, num)
     )
     return _section(
         "s-dataset",
         "Dataset and split composition",
-        "Read from the label files on disk, after filtering and after the split.",
+        "What the model was actually shown. Counted from the label files on disk after "
+        "filtering and after the split, so this is the data as trained on, not the data "
+        "as intended.",
         body,
+        read="Almost every surprise further down starts here. A class with a sliver of "
+        "a bar has too few examples to learn from and too few to evaluate on; a class "
+        "missing from a split cannot be scored in it at all. The size and aspect "
+        "distributions are the ones the accuracy-by-size charts later cut against, so "
+        "a bucket that is thin here will be noisy there.",
+    )
+
+
+def _image_files(blob: dict, num: _Figures) -> str:
+    """Render the image-header pass: the files, before anything was annotated."""
+    stats = blob.get("image_stats")
+    if not stats:
+        return ""
+    columns = "".join(
+        _stat_column(col["heading"], col["rows"]) for col in stats.get("columns") or []
+    )
+    return (
+        "<h3>Image files</h3>"
+        f"<p>Read from the header of every image under the split directories -- "
+        f"{stats['scanned']:,} of them, no pixel decoded.</p>"
+        + fig_block(
+            blob,
+            "f_resolutions",
+            "Top six distinct sizes by image count; everything rarer is one row.",
+            title="Image resolutions",
+            num=num,
+        )
+        + fig_block(blob, "f_img_aspect", wide=False)
+        + fig_block(
+            blob,
+            "f_megapixels",
+            "The axis stops one bin past the largest image, so a 44 MP scale does not "
+            "squash a 12 MP dataset into the first tenth of it.",
+            title="Pixels per image",
+            num=num,
+        )
+        + f'<div class="statrow wide">{columns}</div>'
+        + f'<p class="note">{e(stats.get("note") or "")}</p>'
     )
 
 
@@ -293,53 +555,74 @@ def _per_class(blob: dict) -> str:
     return _section(
         "s-per-class",
         "Per-class evaluation",
-        "Sorted by support ascending: the unreliable rows are at the top, where they "
-        "belong. Click a row to filter the galleries to that class.",
+        "The headline number is an average, and an average hides the class that does "
+        "not work. This is the same evaluation, one row per class.",
         table_block(
             blob,
             "t_per_class",
             "Per-class metrics were unavailable (`metrics.summary()` failed).",
         ),
+        read="Rows are sorted by <b>support</b> &mdash; how many real instances of that "
+        "class the split actually contained &mdash; smallest first, so the rows you "
+        "should trust least are the ones you meet first. A class with nine instances "
+        "can score anything at all and it means nothing either way; read its support "
+        "before you read its score. <b>AP50-95</b> is the strict score and "
+        "<b>AP50</b> the lenient one, and a class where those two are far apart is one "
+        "the model finds but does not outline tightly. Click any row to filter every "
+        "gallery below to that class.",
     )
 
 
-def _confusion(blob: dict) -> str:
+def _confusion(blob: dict, num: _Figures) -> str:
     meta = blob["meta"]
     caption = (
         f"conf = {meta['thresholds']['matrix_display']:g} (display), IoU 0.45 "
         "(ultralytics' fixed matrix threshold). Rows are ground truth, columns are "
         "predictions; the last row and column are background, i.e. false positives and "
-        "false negatives. The background column stays as raw counts in both modes -- "
+        "false negatives. The background column stays as raw counts in both modes "
+        "&mdash; "
         "normalising it would print a count as if it were a rate."
     )
     if meta.get("is_seg"):
         caption += " The matrix is box-IoU based even in segment mode."
+    has_figure = "f_confusion" in (blob.get("figures") or {})
     toggle = (
-        '<button id="cm-toggle" type="button" data-mode="counts">Show row-normalised'
-        "</button>"
-        if "f_confusion" in (blob.get("figures") or {})
+        '<button id="cm-toggle" type="button">Show row-normalised</button>'
+        if has_figure
         else ""
     )
+    figure = fig_block(
+        blob,
+        "f_confusion",
+        caption,
+        "The confusion matrix requires `5_Testing/plots=True`.",
+        title="Confusion matrix",
+        num=num,
+    )
+    # Both ramps ship inside the one SVG; this attribute is what selects between them,
+    # so the toggle is a class swap and never a redraw.
     body = (
         toggle
-        + fig_block(
-            blob,
-            "f_confusion",
-            caption,
-            "The confusion matrix requires `5_Testing/plots=True`.",
-        )
+        + (f'<div id="cm-wrap" data-cm="counts">{figure}</div>' if has_figure else figure)
         + "<h3>Most confused pairs</h3>"
         + table_block(blob, "t_confused_pairs", "No cross-class confusion was captured.")
     )
     return _section(
         "s-confusion",
         "Confusion matrix",
-        "Which classes get mistaken for which, at the display threshold.",
+        "Which classes the model mixes up with which.",
         body,
+        read="Read one row at a time: <b>when the truth was this class, what did the "
+        "model call it?</b> The diagonal is where it agreed with you, so a strong "
+        "diagonal and a pale everything-else is the healthy picture. Anything off the "
+        "diagonal is a swap between two classes. The last column is ground truth "
+        "nothing was detected on, and the last row is detections with nothing "
+        "underneath &mdash; those two are misses and false alarms, not swaps, which is "
+        "why they sit outside the grid proper.",
     )
 
 
-def _threshold(blob: dict) -> str:
+def _threshold(blob: dict, num: _Figures) -> str:
     body = (
         fig_block(
             blob,
@@ -347,13 +630,17 @@ def _threshold(blob: dict) -> str:
             "tau* is the F1-optimal threshold, and it is none of the other three "
             "confidences in this task.",
             "Curve data was not available from this validation pass.",
+            title="Precision, recall and F1 against confidence",
+            num=num,
         )
         + fig_block(
             blob,
             "f_tp_fp_hist",
-            "Two overlapping humps mean no threshold fixes precision -- the model or "
-            "the labels need work, not the tuning.",
+            "Two overlapping humps mean no threshold fixes precision &mdash; the model "
+            "or the labels need work, not the tuning.",
             "The TP-vs-FP split needs `8_Visualization/log_calibration`.",
+            title="Detection confidence, matched against unmatched",
+            num=num,
         )
         + fig_block(
             blob,
@@ -361,74 +648,155 @@ def _threshold(blob: dict) -> str:
             "Computed over predictions only, so it is blind to false negatives. Read it "
             "next to recall.",
             "The reliability diagram needs `8_Visualization/log_calibration`.",
+            title="Reliability",
+            num=num,
         )
     )
     return _section(
         "s-threshold",
         "Operating threshold",
-        "Where to set the deploy threshold, and whether the scores mean anything.",
+        "The model scores every detection from 0 to 1, and somebody has to decide how "
+        "sure is sure enough. Everything you keep below that line is a false alarm you "
+        "chose to accept; everything you drop above it is a real object you chose to "
+        "miss. This section is that one decision.",
         body,
+        read="<b>Precision</b> is how often a detection turns out to be real. "
+        "<b>Recall</b> is how much of what was actually there you found. Moving the "
+        "threshold up buys precision and pays for it in recall, always. <b>&tau;*</b> "
+        "is where F1 &mdash; the balance of the two &mdash; is highest, and it is the "
+        "number to deploy at unless a false alarm and a miss cost you different "
+        "amounts. If the two humps in the second chart sit on top of each other, no "
+        "threshold anywhere will separate them and the model or the labels are the "
+        "problem, not the tuning.",
     )
 
 
-def _tide(blob: dict) -> str:
+def _tide(blob: dict, num: _Figures) -> str:
     mode = blob.get("tide_mode", "none")
     title = {
         "delta_ap": "Error decomposition (dAP oracles)",
         "counts": "TIDE error counts (dAP oracles not computed)",
     }.get(mode, "Error decomposition (not captured)")
-    body = fig_block(
-        blob,
-        "f_tide",
-        "",
-        "Not captured: the per-image wrapper did not run for this validation pass.",
-    ) + table_block(blob, "t_tide", "Not captured for this run.")
+    body = (
+        _glossary(TIDE_TYPES)
+        + fig_block(
+            blob,
+            "f_tide",
+            "Matched at IoU 0.5 for foreground and 0.1 for background, box IoU only "
+            "&mdash; even on a segmentation run. The two dashed ceilings are the "
+            "false-positive and false-negative oracles, which are not segments of the "
+            "bar.",
+            "Not captured: the per-image wrapper did not run for this validation pass.",
+            title="dAP50 by error type",
+            num=num,
+        )
+        + table_block(blob, "t_tide", "Not captured for this run.")
+    )
     return _section(
         "s-tide",
         title,
-        "Six error types, each with the AP an oracle that fixed only that error would "
-        "recover.",
+        "Every mistake this model made, sorted into six kinds. A detector can be wrong "
+        "in more than one way, and the fix for each way is a different fix &mdash; so "
+        "the useful question is not how many mistakes there were but which kind they "
+        "were.",
         body,
+        read="Each bar answers one question: <b>if you could fix only this one kind of "
+        "mistake and change nothing else, how much accuracy would you get back?</b> "
+        "That is what dAP50 is, measured in the same points as mAP50. The longest bar "
+        "is where the work is, and the table's last column says what that work would "
+        "be. They are six independent what-ifs, so they do not add up to the total "
+        "headroom &mdash; fixing two kinds at once is worth less than the two bars "
+        "summed.",
     )
 
 
-def _strata(blob: dict) -> str:
+def _strata(blob: dict, num: _Figures) -> str:
     body = (
         fig_block(
             blob,
             "f_recall_by_size",
             "These are this dataset's own terciles, not COCO's 32x32 / 96x96 absolutes.",
             "Not captured: the per-image wrapper did not run.",
+            title="Recall by object size",
+            num=num,
         )
         + fig_block(
             blob,
             "f_iou_hist_tp",
-            "Mass piled just above 0.50 means localisation is the bottleneck -- it "
+            "Mass piled just above 0.50 means localisation is the bottleneck &mdash; it "
             "should agree with the Loc segment of the error decomposition.",
+            title="IoU of matched detections",
+            num=num,
         )
-        + fig_block(blob, "f_recall_vs_area")
-        + fig_block(blob, "f_recall_by_ar")
+        + fig_block(
+            blob,
+            "f_recall_vs_area",
+            "Deciles of this split's own size distribution, in pixels at this run's "
+            "imgsz.",
+            title="Recall against object size",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_recall_by_ar",
+            "A bucket the model never recalls is usually a bucket the training split "
+            "barely had.",
+            title="Recall by aspect ratio",
+            num=num,
+        )
     )
     return _section(
         "s-strata",
         "Size and shape",
-        "Where the misses actually are.",
+        "The same accuracy again, cut by how big each object was and what shape it "
+        "was. A model rarely fails evenly &mdash; it fails on the small ones, or the "
+        "long thin ones, and the average hides that completely.",
         body,
+        read="Every bar is <b>recall</b>: of the objects in that bucket, how many were "
+        "found. One bar sitting well below its neighbours names the kind of object "
+        "this model does not see, and that is usually the kind the training split "
+        "barely contained &mdash; check the bucket's own support before concluding the "
+        "model is at fault. In the IoU chart, mass piled just above 0.50 means the "
+        "boxes are being found but drawn loosely, which is a different problem from "
+        "not finding them.",
     )
 
 
-def _boxmask(blob: dict) -> str:
+def _boxmask(blob: dict, num: _Figures) -> str:
     body = (
-        fig_block(blob, "f_boxmask_class", "Box in slot 1, mask in slot 3.")
+        fig_block(
+            blob,
+            "f_boxmask_class",
+            "Upper bar is box, lower is mask. A class whose two bars are the same "
+            "length was annotated as rectangles.",
+            title="Box against mask, per class",
+            num=num,
+        )
         + fig_block(
             blob,
             "f_boxmask_iou",
             "The mask axis is quantised to the ten IoU thresholds, because ultralytics "
             "discards the pairwise mask IoU matrix. Mass on the diagonal at high IoU is "
             "the rectangle-annotation signature.",
+            title="Box IoU against mask IoU level",
+            num=num,
         )
-        + fig_block(blob, "f_iou_overlay")
-        + fig_block(blob, "f_boxmask_size")
+        + fig_block(
+            blob,
+            "f_iou_overlay",
+            "Density rather than share: the box axis has 50 bins and the mask axis 11, "
+            "so their raw shares are not comparable.",
+            title="Box and mask IoU distributions",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_boxmask_size",
+            "Signed, and every bar carries its sign: a negative bucket is one where the "
+            "mask fits worse than the box.",
+            title="Mask minus box IoU by size",
+            num=num,
+        )
     )
     return _section(
         "s-boxmask",
@@ -449,7 +817,14 @@ def _galleries(blob: dict, gallery_link: str | None = None) -> str:
         )
         return _section("s-galleries", "Galleries", "", body)
 
-    parts = []
+    parts = [
+        (
+            '<p class="gal-switch"><button class="anno" id="anno" type="button" '
+            'role="switch" aria-checked="true"><span>annotations</span>'
+            '<span class="trk" aria-hidden="true"><span class="knb"></span></span>'
+            "</button></p>"
+        )
+    ]
     for gid, grid in (blob.get("grids") or {}).items():
         items = grid.get("items") or []
         if not items:
@@ -459,10 +834,10 @@ def _galleries(blob: dict, gallery_link: str | None = None) -> str:
                 "</p>"
             )
             continue
-        figs = []
+        tiles = []
         for i, item in enumerate(items):
-            figs.append(
-                f'<figure data-gid="{e(gid)}" data-idx="{i}" '
+            tiles.append(
+                f'<figure data-gid="{e(gid)}" data-idx="{i}" tabindex="0" '
                 f'data-outcome="{e(item["outcome"])}" '
                 f'data-classes="{e(" ".join(item.get("classes") or []))}" '
                 f'data-pairs="{e(" ".join(item.get("pairs") or []))}">'
@@ -471,25 +846,81 @@ def _galleries(blob: dict, gallery_link: str | None = None) -> str:
             )
         parts.append(
             f"<h3>{e(grid['title'])}</h3>"
-            f'<p class="caption">{e(grid["subtitle"])} &mdash; {e(grid["basis"])}. '
-            f'<span class="shown"></span></p>'
-            f'<div class="grid">{"".join(figs)}</div>'
+            f'<div class="galwrap wide" data-gid="{e(gid)}" data-tab="outcome">'
+            f'<div class="gal-head">{_tabs(gid)}'
+            f'<span class="gal-meta"><span class="shown"></span> &middot; '
+            f"{e(grid['subtitle'])} &middot; {e(grid['basis'])}</span></div>"
+            f'<div class="gal at-start"><div class="grid">{"".join(tiles)}</div></div>'
+            f"{_legend()}</div>"
         )
     return _section(
         "s-galleries",
         "Galleries",
-        "Colour is the outcome and nothing else: green solid is a true positive, red "
-        "solid a false positive, amber dashed a miss. Click any thumbnail for the "
-        "labelled overlay.",
+        "The numbers above say how much the model got wrong. These say what it got "
+        "wrong, and they are the fastest way to tell a model problem from a labelling "
+        "problem &mdash; a &ldquo;false positive&rdquo; on a real object nobody "
+        "annotated is not a model error at all.",
         "".join(parts),
+        read="Each tile is one image, and the three tabs draw three different layers "
+        "over the <em>same</em> pixels. <b>Outcome</b> marks every detection as a hit "
+        "or a false alarm and every missed object in dashes. <b>Prediction</b> shows "
+        "what the model said and how sure it was. <b>Ground truth</b> shows what was "
+        "annotated. The switch turns all overlays off at once so you can look at the "
+        "photograph itself, the <b>a</b> key does the same from the keyboard, and any "
+        "tile opens full-size.",
     )
 
 
-def _training(blob: dict) -> str:
+def _tabs(gid: str) -> str:
+    buttons = []
+    for i, (key, label) in enumerate(GALLERY_TABS):
+        first = i == 0
+        buttons.append(
+            f'<button class="tab" type="button" role="tab" data-tab="{key}" '
+            f'aria-selected="{"true" if first else "false"}"'
+            f"{'' if first else ' tabindex=-1'}>{label}</button>"
+        )
+    return (
+        f'<div class="tabs" role="tablist" aria-label="Overlay layer for {e(gid)}">'
+        f"{''.join(buttons)}</div>"
+    )
+
+
+def _legend() -> str:
+    return (
+        '<p class="gal-legend">'
+        '<span class="lg-outcome">'
+        '<i><span class="sw tp" aria-hidden="true"></span>true positive</i>'
+        '<i><span class="sw fp" aria-hidden="true"></span>false positive</i>'
+        '<i><span class="sw fn" aria-hidden="true"></span>missed ground truth</i></span>'
+        '<span class="lg-pred">'
+        '<i><span class="sw pd" aria-hidden="true"></span>detection, confidence '
+        "printed</i></span>"
+        '<span class="lg-gt">'
+        '<i><span class="sw gt" aria-hidden="true"></span>annotated instance</i></span>'
+        "</p>"
+    )
+
+
+def _training(blob: dict, num: _Figures) -> str:
     body = (
-        '<details class="lazy"><summary>Training curves</summary>'
-        + fig_block(blob, "f_val_map", "", "Training history not found (`results.csv`).")
-        + fig_block(blob, "f_losses")
+        "<details><summary>Training curves</summary>"
+        + fig_block(
+            blob,
+            "f_val_map",
+            "",
+            "Training history not found (`results.csv`).",
+            title="Validation mAP against epoch",
+            num=num,
+        )
+        + fig_block(
+            blob,
+            "f_losses",
+            "Raw loss values on one axis, so the shapes are comparable and the "
+            "magnitudes are not.",
+            title="Training losses against epoch",
+            num=num,
+        )
         + "</details>"
     )
     return _section(
@@ -498,6 +929,35 @@ def _training(blob: dict) -> str:
         "Downsampled to a fixed point count, which is what keeps report size "
         "independent of epoch count.",
         body,
+    )
+
+
+def _environment(blob: dict) -> str:
+    env = blob.get("environment") or {}
+    # No `num=`: the epoch chart sits inside a stat column, where a "Fig N." caption
+    # would be wider than the column and would number a figure nobody cross-references.
+    chart = fig_block(blob, "f_epoch_seconds", wide=False)
+    columns = (
+        _stat_column("Where", env.get("where") or [])
+        + _stat_column("How long", env.get("timing") or [])
+        + (
+            f'<div class="statcol chart-col"><p class="stat-h">Seconds per epoch</p>'
+            f"{chart}</div>"
+            if "f_epoch_seconds" in (blob.get("figures") or {})
+            else ""
+        )
+    )
+    return _section(
+        "s-environment",
+        "Environment",
+        "Which machine produced these numbers, from which code, and how long it took. "
+        "It sits this high up because it is what makes the rest reproducible: a result "
+        "you cannot trace back to a commit and an image tag is not a result yet. The "
+        "machine facts are read on the agent, the worker id and start time come from "
+        "the ClearML task, and anything unreadable prints "
+        '<span class="mono">unknown</span> rather than disappearing.',
+        f'<div class="statrow env wide">{columns}</div>'
+        f'<p class="note">{e(env.get("note") or "")}</p>',
     )
 
 
@@ -526,46 +986,56 @@ def render_report(
     index of one, whose gallery section becomes a link to that child's **absolute** URL
     (relative links between artifacts break -- each artifact name is its own directory).
     """
+    num = _Figures()
     if only_galleries:
         sections = [_galleries(blob), _caveats(blob)]
         anchors = {"s-galleries", "s-caveats"}
     else:
         builders = [
             ("s-header", _header),
+            ("s-highlights", _highlights),
             ("s-model-card", _model_card),
-            ("s-dataset", _dataset),
+            ("s-environment", _environment),
+            ("s-dataset", lambda b: _dataset(b, num)),
             ("s-per-class", _per_class),
-            ("s-confusion", _confusion),
-            ("s-threshold", _threshold),
-            ("s-tide", _tide),
-            ("s-strata", _strata),
+            ("s-confusion", lambda b: _confusion(b, num)),
+            ("s-threshold", lambda b: _threshold(b, num)),
+            ("s-tide", lambda b: _tide(b, num)),
+            ("s-strata", lambda b: _strata(b, num)),
         ]
         if blob["meta"].get("is_seg"):
-            builders.append(("s-boxmask", _boxmask))
+            builders.append(("s-boxmask", lambda b: _boxmask(b, num)))
         builders += [
             ("s-galleries", lambda b: _galleries(b, gallery_link)),
-            ("s-training", _training),
+            ("s-training", lambda b: _training(b, num)),
             ("s-caveats", _caveats),
         ]
         sections = [fn(blob) for _, fn in builders]
         anchors = {a for a, _ in builders}
 
     nav = "".join(
-        f'<a href="#{a}">{e(label)}</a>' for a, label in SECTION_ORDER if a in anchors
+        f'<a href="#{a}"><span class="toc-i">{_icon(a)}</span>{label}</a>'
+        for a, label in SECTION_ORDER
+        if a in anchors
     )
     title = f"Evaluation report - {blob['meta'].get('run_name', 'run')}"
-    payload = json.dumps(blob, separators=(",", ":"), allow_nan=False, default=str)
+
+    # The figures are already in the document as SVG. Shipping them in the blob as well
+    # would put every chart in the file twice.
+    payload = dict(blob)
+    payload["figures"] = {}
+    body = json.dumps(payload, separators=(",", ":"), allow_nan=False, default=str)
     # `</script>` inside the JSON would close the element early; nothing else can.
-    payload = payload.replace("</", "<\\/")
+    body = body.replace("</", "<\\/")
 
     document = _asset("template.html")
     for token, value in (
         ("{{TITLE}}", e(title)),
-        ("{{CSS}}", theme.css_variables() + _asset("report.css")),
-        ("{{NAV}}", nav),
+        ("{{RUN_NAME}}", e(blob["meta"].get("run_name", "run"))),
+        ("{{CSS}}", _asset("report.css")),
+        ("{{TOC}}", nav),
         ("{{SECTIONS}}", "".join(sections)),
-        ("{{BLOB}}", payload),
-        ("{{PLOTLY_JS}}", _asset("plotly-cartesian.min.js")),
+        ("{{BLOB}}", body),
         ("{{SORTABLE_JS}}", _asset("sortable.min.js")),
         ("{{REPORT_JS}}", _asset("report.js")),
     ):
@@ -579,6 +1049,7 @@ def split_blob(blob: dict) -> tuple[dict, dict]:
         "schema": blob["schema"],
         "meta": blob["meta"],
         "kpis": [],
+        "highlights": [],
         "model_card": {
             "intended_use": "",
             "out_of_scope": "",
@@ -589,7 +1060,8 @@ def split_blob(blob: dict) -> tuple[dict, dict]:
         "warnings": [],
         "classes": blob["classes"],
         "figures": {},
-        "plotly_template": blob["plotly_template"],
+        "image_stats": None,
+        "environment": {},
         "tables": {},
         "grids": blob["grids"],
         "thumbs": blob["thumbs"],

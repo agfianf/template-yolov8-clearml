@@ -41,7 +41,11 @@ MAX_CAPTURE_ERRORS = 50
 # `max_det`. A crowd image with thousands of boxes would otherwise dominate the
 # reservoir's memory on its own.
 MAX_GT_PER_IMAGE = 300
-MAX_BOXES_PER_ITEM = 20
+# Two layers now share this budget -- predictions (`tp` + `fp`) and annotations (`gt` +
+# `fn`) -- so it is twice what it was when only one set of boxes was drawn. `_balanced`
+# splits it, because a flat truncation of the concatenation drops the annotation layer
+# on exactly the crowded images the galleries select.
+MAX_BOXES_PER_ITEM = 40
 
 # Fixed-size accumulators. None of these grows with dataset size.
 IOU_BINS = 50
@@ -435,9 +439,18 @@ class ReportCapture:
                 self.ar_matched[rb] += int(hit)
 
     def _overlay(self, rec: dict, iou: np.ndarray, order: np.ndarray, matched: dict):
-        """Build the whole-image overlay for one record, at the display threshold."""
+        """Build the whole-image overlay for one record, at the display threshold.
+
+        Four outcomes, forming two layers rather than three states: `tp` + `fp` is what
+        the model predicted, `gt` + `fn` is what was annotated. Matched ground truth is
+        carried even though a matched pair looks redundant -- the detection and the
+        annotation are two different rectangles, and the gallery's Ground truth tab
+        cannot be reconstructed from the detection one.
+        """
         matched_gt = set(matched.values())
-        boxes: list[list] = []
+        predictions: list[list] = []
+        misses: list[list] = []
+        annotations: list[list] = []
         classes: set[str] = set()
         pairs: set[str] = set()
         n_fp = n_fn = 0
@@ -448,13 +461,13 @@ class ReportCapture:
             conf = float(rec["det_conf"][d])
             if d in matched:
                 g = matched[d]
-                boxes.append(
+                predictions.append(
                     self._box("tp", rec["det_box"][d], cls, conf, float(iou[g, d]))
                 )
                 continue
             n_fp += 1
             best = float(iou[:, d].max()) if iou.size else 0.0
-            boxes.append(self._box("fp", rec["det_box"][d], cls, conf, best))
+            predictions.append(self._box("fp", rec["det_box"][d], cls, conf, best))
             if iou.size:
                 g = int(np.argmax(iou[:, d]))
                 if iou[g, d] >= MATCH_IOU:
@@ -462,9 +475,14 @@ class ReportCapture:
         for g in range(rec["gt_box"].shape[0]):
             cls = int(rec["gt_cls"][g])
             classes.add(self._name(cls))
-            if g not in matched_gt:
+            if g in matched_gt:
+                annotations.append(self._box("gt", rec["gt_box"][g], cls, None, None))
+            else:
                 n_fn += 1
-                boxes.append(self._box("fn", rec["gt_box"][g], cls, None, None))
+                misses.append(self._box("fn", rec["gt_box"][g], cls, None, None))
+        # Misses first inside the annotation layer: they are the boxes the Outcome tab
+        # shows, so they are the ones that must survive a truncation.
+        boxes = _balanced(predictions, misses + annotations, MAX_BOXES_PER_ITEM)
         return boxes, sorted(classes)[:12], sorted(pairs)[:6], n_fp, n_fn
 
     def _feed_grids(self, rec: dict) -> None:
@@ -650,3 +668,19 @@ class ReportCapture:
 
 def _basename(path: str) -> str:
     return path.replace("\\", "/").rsplit("/", 1)[-1] or path
+
+
+def _balanced(first: list, second: list, limit: int) -> list:
+    """Take at most `limit` items from two layers, half each, the unused half reallocated.
+
+    Truncating `first + second` would spend the whole budget on the prediction layer of
+    any image carrying more detections than the cap -- and an image with a hundred
+    detections is precisely what the worst-images grid selects, so the annotation layer
+    would vanish exactly where it is needed.
+    """
+    if limit <= 0:
+        return []
+    half = limit // 2
+    take_first = min(len(first), max(half, limit - len(second)))
+    take_second = min(len(second), limit - take_first)
+    return first[:take_first] + second[:take_second]
